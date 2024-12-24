@@ -1,0 +1,38 @@
+{
+  "$schema": "https://developer.microsoft.com/json-schemas/fabric/item/report/definition/visualContainer/1.4.0/schema.json",
+  "name": "591cc2f93d8e99bd201a",
+  "position": {
+    "x": 909.03703703703707,
+    "y": 18.962962962962962,
+    "z": 9004,
+    "height": 73.481481481481481,
+    "width": 161.18518518518519,
+    "tabOrder": 5
+  },
+  "visual": {
+    "visualType": "textSlicer",
+    "query": {
+      "queryState": {
+        "Values": {
+          "projections": [
+            {
+              "field": {
+                "Column": {
+                  "Expression": {
+                    "SourceRef": {
+                      "Entity": "IMDB"
+                    }
+                  },
+                  "Property": "Directors"
+                }
+              },
+              "queryRef": "IMDB.Directors",
+              "nativeQueryRef": "Directors"
+            }
+          ]
+        }
+      }
+    },
+    "drillFilterOtherVisuals": true
+  }
+}

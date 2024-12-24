@@ -1,0 +1,601 @@
+{
+  "compatibilityLevel": 1604,
+  "model": {
+    "annotations": [
+      {
+        "name": "__PBI_TimeIntelligenceEnabled",
+        "value": "0"
+      },
+      {
+        "name": "PBIDesktopVersion",
+        "value": "2.139.7496.1 (Main)+061188de2d27b556d0c15d8f70c4426f68783390"
+      },
+      {
+        "name": "PBI_QueryOrder",
+        "value": "[\"DatabaseQuery\"]"
+      },
+      {
+        "name": "PBI_ProTooling",
+        "value": "[\"WebModelingEdit\"]"
+      },
+      {
+        "name": "__TEdtr",
+        "value": "1"
+      }
+    ],
+    "collation": "Latin1_General_100_BIN2_UTF8",
+    "culture": "en-US",
+    "cultures": [
+      {
+        "name": "en-US",
+        "linguisticMetadata": {
+          "content": {
+            "Language": "en-US",
+            "Version": "1.0.0"
+          },
+          "contentType": "json"
+        }
+      }
+    ],
+    "dataAccessOptions": {
+      "legacyRedirects": true,
+      "returnErrorValuesAsNull": true
+    },
+    "defaultPowerBIDataSourceVersion": "powerBI_V3",
+    "expressions": [
+      {
+        "name": "DatabaseQuery",
+        "annotations": [
+          {
+            "name": "PBI_IncludeFutureArtifacts",
+            "value": "False"
+          }
+        ],
+        "expression": [
+          "let",
+          "    database = Sql.Database(\"CEAEJAPELL3URLHQQ3YNLVVB4I-773FYYP62JMU3GPYQH2YDWFOLU.datawarehouse.fabric.microsoft.com\", \"e5321f23-10d7-4dfd-9749-6017dab254ad\")",
+          "in",
+          "    database"
+        ],
+        "kind": "m",
+        "lineageTag": "a23dc01e-9d2a-40f7-8540-93f1530d5587"
+      }
+    ],
+    "sourceQueryCulture": "en-US",
+    "tables": [
+      {
+        "name": "IMDB",
+        "annotations": [
+          {
+            "name": "PBI_ResultType",
+            "value": "Table"
+          }
+        ],
+        "changedProperties": [
+          {
+            "property": "Name"
+          }
+        ],
+        "columns": [
+          {
+            "name": "Popularity Rank",
+            "annotations": [
+              {
+                "name": "SummarizationSetBy",
+                "value": "Automatic"
+              }
+            ],
+            "changedProperties": [
+              {
+                "property": "Name"
+              }
+            ],
+            "dataType": "int64",
+            "formatString": "0",
+            "lineageTag": "220a4c52-15df-407c-bd96-cb90d0e4ba89",
+            "sourceColumn": "overall_popularity_rnk",
+            "sourceLineageTag": "overall_popularity_rnk",
+            "sourceProviderType": "int",
+            "summarizeBy": "none"
+          },
+          {
+            "name": "IMDB ID",
+            "annotations": [
+              {
+                "name": "SummarizationSetBy",
+                "value": "Automatic"
+              }
+            ],
+            "dataType": "string",
+            "lineageTag": "20cd3900-79f4-4ebf-906e-2001e41f64a8",
+            "sourceColumn": "tconst",
+            "sourceLineageTag": "tconst",
+            "sourceProviderType": "varchar(8000)",
+            "summarizeBy": "none"
+          },
+          {
+            "name": "Title Type",
+            "annotations": [
+              {
+                "name": "SummarizationSetBy",
+                "value": "Automatic"
+              }
+            ],
+            "changedProperties": [
+              {
+                "property": "Name"
+              }
+            ],
+            "dataType": "string",
+            "lineageTag": "15eaab2b-fe74-43c7-b7d7-a3c7a64708d0",
+            "sourceColumn": "title_type",
+            "sourceLineageTag": "title_type",
+            "sourceProviderType": "varchar(8000)",
+            "summarizeBy": "none"
+          },
+          {
+            "name": "Primary Title",
+            "annotations": [
+              {
+                "name": "SummarizationSetBy",
+                "value": "Automatic"
+              }
+            ],
+            "dataType": "string",
+            "lineageTag": "af082e24-f276-43b6-8cb8-7cf637b3eded",
+            "sourceColumn": "primary_title",
+            "sourceLineageTag": "primary_title",
+            "sourceProviderType": "varchar(8000)",
+            "summarizeBy": "none"
+          },
+          {
+            "name": "Original Title",
+            "annotations": [
+              {
+                "name": "SummarizationSetBy",
+                "value": "Automatic"
+              }
+            ],
+            "dataType": "string",
+            "lineageTag": "4b1117c7-737c-4aeb-b70c-c71867d1d7e1",
+            "sourceColumn": "original_title",
+            "sourceLineageTag": "original_title",
+            "sourceProviderType": "varchar(8000)",
+            "summarizeBy": "none"
+          },
+          {
+            "name": "Release Year",
+            "annotations": [
+              {
+                "name": "SummarizationSetBy",
+                "value": "Automatic"
+              }
+            ],
+            "dataType": "int64",
+            "formatString": "0",
+            "lineageTag": "021882a1-30d3-4023-b428-6756e0680a3c",
+            "sourceColumn": "release_year",
+            "sourceLineageTag": "yr",
+            "sourceProviderType": "bigint",
+            "summarizeBy": "none"
+          },
+          {
+            "name": "Is Adult",
+            "annotations": [
+              {
+                "name": "SummarizationSetBy",
+                "value": "Automatic"
+              }
+            ],
+            "changedProperties": [
+              {
+                "property": "Name"
+              }
+            ],
+            "dataType": "string",
+            "lineageTag": "bbd7c1ba-df81-4e8b-a669-a5d3c78a618f",
+            "sourceColumn": "is_adult",
+            "sourceLineageTag": "is_adult",
+            "sourceProviderType": "varchar(8000)",
+            "summarizeBy": "none"
+          },
+          {
+            "name": "runtime_min",
+            "annotations": [
+              {
+                "name": "SummarizationSetBy",
+                "value": "Automatic"
+              }
+            ],
+            "changedProperties": [
+              {
+                "property": "IsHidden"
+              }
+            ],
+            "dataType": "int64",
+            "formatString": "0",
+            "isHidden": true,
+            "lineageTag": "bb674835-a25d-43cd-bd23-ace0e882622b",
+            "sourceColumn": "runtime_min",
+            "sourceLineageTag": "runtime_min",
+            "sourceProviderType": "bigint",
+            "summarizeBy": "sum"
+          },
+          {
+            "name": "Generes",
+            "annotations": [
+              {
+                "name": "SummarizationSetBy",
+                "value": "Automatic"
+              }
+            ],
+            "changedProperties": [
+              {
+                "property": "Name"
+              }
+            ],
+            "dataType": "string",
+            "lineageTag": "7170c79c-9397-4804-a0bc-e7fd61969dae",
+            "sourceColumn": "genres",
+            "sourceLineageTag": "genres",
+            "sourceProviderType": "varchar(8000)",
+            "summarizeBy": "none"
+          },
+          {
+            "name": "avg_rating",
+            "annotations": [
+              {
+                "name": "SummarizationSetBy",
+                "value": "Automatic"
+              },
+              {
+                "name": "PBI_FormatHint",
+                "value": "{\"isGeneralNumber\":true}"
+              }
+            ],
+            "changedProperties": [
+              {
+                "property": "IsHidden"
+              }
+            ],
+            "dataType": "double",
+            "isHidden": true,
+            "lineageTag": "d649adcc-3499-4638-baa6-b88d7b84ad2d",
+            "sourceColumn": "avg_rating",
+            "sourceLineageTag": "avg_rating",
+            "sourceProviderType": "float",
+            "summarizeBy": "sum"
+          },
+          {
+            "name": "num_votes",
+            "annotations": [
+              {
+                "name": "SummarizationSetBy",
+                "value": "Automatic"
+              }
+            ],
+            "changedProperties": [
+              {
+                "property": "IsHidden"
+              }
+            ],
+            "dataType": "int64",
+            "formatString": "0",
+            "isHidden": true,
+            "lineageTag": "e462b090-1809-4389-be62-3649ec717fd5",
+            "sourceColumn": "num_votes",
+            "sourceLineageTag": "num_votes",
+            "sourceProviderType": "bigint",
+            "summarizeBy": "sum"
+          },
+          {
+            "name": "box_office",
+            "annotations": [
+              {
+                "name": "SummarizationSetBy",
+                "value": "Automatic"
+              }
+            ],
+            "changedProperties": [
+              {
+                "property": "IsHidden"
+              }
+            ],
+            "dataType": "int64",
+            "formatString": "0",
+            "isHidden": true,
+            "lineageTag": "520c9e74-214d-45c9-83ec-017d4eea7bb8",
+            "sourceColumn": "box_office",
+            "sourceLineageTag": "box_office",
+            "sourceProviderType": "bigint",
+            "summarizeBy": "sum"
+          },
+          {
+            "name": "Top 250 Rank",
+            "annotations": [
+              {
+                "name": "SummarizationSetBy",
+                "value": "Automatic"
+              }
+            ],
+            "changedProperties": [
+              {
+                "property": "Name"
+              }
+            ],
+            "dataType": "int64",
+            "formatString": "0",
+            "lineageTag": "7a1548fc-7268-469d-a776-afd6f71fa4e0",
+            "sourceColumn": "top_250_rnk",
+            "sourceLineageTag": "top_250_rnk",
+            "sourceProviderType": "bigint",
+            "summarizeBy": "none"
+          },
+          {
+            "name": "Is in Top 1000 Movies",
+            "annotations": [
+              {
+                "name": "SummarizationSetBy",
+                "value": "Automatic"
+              }
+            ],
+            "changedProperties": [
+              {
+                "property": "Name"
+              }
+            ],
+            "dataType": "string",
+            "lineageTag": "45558799-e1a5-4bfd-9b7c-d79b2faf8d38",
+            "sourceColumn": "is_top_1000_movies",
+            "sourceLineageTag": "is_top_1000_movies",
+            "sourceProviderType": "varchar(8000)",
+            "summarizeBy": "none"
+          },
+          {
+            "name": "Languages",
+            "annotations": [
+              {
+                "name": "SummarizationSetBy",
+                "value": "Automatic"
+              }
+            ],
+            "changedProperties": [
+              {
+                "property": "Name"
+              }
+            ],
+            "dataType": "string",
+            "lineageTag": "08faa8c8-6205-42d4-a7a4-585552c33923",
+            "sourceColumn": "language_lst",
+            "sourceLineageTag": "language_lst",
+            "sourceProviderType": "varchar(8000)",
+            "summarizeBy": "none"
+          },
+          {
+            "name": "Directors",
+            "annotations": [
+              {
+                "name": "SummarizationSetBy",
+                "value": "Automatic"
+              }
+            ],
+            "changedProperties": [
+              {
+                "property": "Name"
+              }
+            ],
+            "dataType": "string",
+            "lineageTag": "937aa027-9021-4890-998d-6186bbb85d11",
+            "sourceColumn": "director_lst",
+            "sourceLineageTag": "director_lst",
+            "sourceProviderType": "varchar(8000)",
+            "summarizeBy": "none"
+          },
+          {
+            "name": "Actors",
+            "annotations": [
+              {
+                "name": "SummarizationSetBy",
+                "value": "Automatic"
+              }
+            ],
+            "changedProperties": [
+              {
+                "property": "Name"
+              }
+            ],
+            "dataType": "string",
+            "lineageTag": "78ce061c-85f5-488c-8d20-a3423a3af50c",
+            "sourceColumn": "actor_lst",
+            "sourceLineageTag": "actor_lst",
+            "sourceProviderType": "varchar(8000)",
+            "summarizeBy": "none"
+          },
+          {
+            "name": "Actresses",
+            "annotations": [
+              {
+                "name": "SummarizationSetBy",
+                "value": "Automatic"
+              }
+            ],
+            "changedProperties": [
+              {
+                "property": "Name"
+              }
+            ],
+            "dataType": "string",
+            "lineageTag": "6e40e0f3-b0d6-442b-b7de-d5d1f623226a",
+            "sourceColumn": "actress_lst",
+            "sourceLineageTag": "actress_lst",
+            "sourceProviderType": "varchar(8000)",
+            "summarizeBy": "none"
+          },
+          {
+            "name": "last_refresh_date",
+            "annotations": [
+              {
+                "name": "SummarizationSetBy",
+                "value": "Automatic"
+              }
+            ],
+            "changedProperties": [
+              {
+                "property": "IsHidden"
+              }
+            ],
+            "dataType": "dateTime",
+            "formatString": "General Date",
+            "isHidden": true,
+            "lineageTag": "8ac58084-7b16-4c72-b1fd-bad2f5fbefd9",
+            "sourceColumn": "last_refresh_date",
+            "sourceLineageTag": "last_refresh_date",
+            "sourceProviderType": "date",
+            "summarizeBy": "none"
+          }
+        ],
+        "lineageTag": "71834acd-68b9-447b-93a9-31279d78bf4c",
+        "measures": [
+          {
+            "name": "Avg Rating",
+            "changedProperties": [
+              {
+                "property": "Name"
+              },
+              {
+                "property": "FormatString"
+              }
+            ],
+            "expression": "AVERAGE(IMDB[avg_rating])",
+            "formatString": "0.0",
+            "lineageTag": "6a2e45b0-5dec-4545-8f60-0b9a42128cdf"
+          },
+          {
+            "name": "Avg Runtime (mins)",
+            "changedProperties": [
+              {
+                "property": "Name"
+              },
+              {
+                "property": "FormatString"
+              }
+            ],
+            "expression": "AVERAGE(IMDB[runtime_min])",
+            "formatString": "0",
+            "lineageTag": "065b9401-8ea6-41ef-a6ac-a49dc5fcbc76"
+          },
+          {
+            "name": "Box Office $",
+            "changedProperties": [
+              {
+                "property": "Name"
+              },
+              {
+                "property": "FormatString"
+              }
+            ],
+            "expression": "SUM(IMDB[box_office])",
+            "formatString": "#,0",
+            "lineageTag": "73a56fdc-904a-4721-b676-c99e20fecd3e"
+          },
+          {
+            "name": "Data as of",
+            "annotations": [
+              {
+                "name": "PBI_FormatHint",
+                "value": "{\"isCustom\":true}"
+              }
+            ],
+            "changedProperties": [
+              {
+                "property": "Name"
+              },
+              {
+                "property": "FormatString"
+              }
+            ],
+            "expression": [
+              "",
+              "MAX ( IMDB[last_refresh_date] )"
+            ],
+            "formatString": "dd-MMM-yyyy",
+            "lineageTag": "4bec6678-879f-4da2-9798-6224c7b59f53"
+          },
+          {
+            "name": "Number of Votes",
+            "changedProperties": [
+              {
+                "property": "Name"
+              },
+              {
+                "property": "FormatString"
+              }
+            ],
+            "expression": [
+              "",
+              "SUM ( IMDB[num_votes] )"
+            ],
+            "formatString": "#,0",
+            "lineageTag": "129dad9e-7a53-4212-8718-9ddba097c619"
+          },
+          {
+            "name": "Title #",
+            "changedProperties": [
+              {
+                "property": "Name"
+              },
+              {
+                "property": "FormatString"
+              }
+            ],
+            "expression": [
+              "",
+              "COUNTROWS ( IMDB )"
+            ],
+            "formatString": "#,0",
+            "lineageTag": "0d9b0666-2c49-4104-9ed8-76a22c5313df"
+          },
+          {
+            "name": "IMDB Link",
+            "expression": [
+              "",
+              "\"https://www.imdb.com/title/\"",
+              "    & SELECTEDVALUE ( IMDB[IMDB ID] ) & \"/\""
+            ],
+            "lineageTag": "c6f95d04-5f37-4f17-aad4-b33fc02396b9"
+          },
+          {
+            "name": "Font Color",
+            "expression": [
+              "",
+              "IF (",
+              "    CALCULATE (",
+              "        NOT ISEMPTY ( IMDB ),",
+              "        KEEPFILTERS (",
+              "            IMDB[Is in Top 1000 Movies] = \"Y\"",
+              "                || NOT ISBLANK ( IMDB[Top 250 Rank] )",
+              "        )",
+              "    ),",
+              "    \"Green\"",
+              ")"
+            ],
+            "lineageTag": "77e5a161-fd20-4a7a-99c9-84fd4cf561cd"
+          }
+        ],
+        "partitions": [
+          {
+            "name": "IMDB",
+            "mode": "directLake",
+            "source": {
+              "entityName": "t_imdb",
+              "expressionSource": "DatabaseQuery",
+              "schemaName": "gold",
+              "type": "entity"
+            }
+          }
+        ],
+        "sourceLineageTag": "[gold].[t_imdb]"
+      }
+    ]
+  }
+}
