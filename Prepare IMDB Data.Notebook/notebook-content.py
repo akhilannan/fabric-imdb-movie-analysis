@@ -317,9 +317,14 @@ def create_or_replace_delta_table(df: pl.DataFrame | pl.LazyFrame, path: str) ->
         df = df.collect()
 
     df.write_delta(
-        path, 
-        mode="overwrite", 
-        delta_write_options={"schema_mode": "overwrite"}
+        path,
+        mode="overwrite",
+        delta_write_options={
+            "schema_mode": "overwrite",
+            "max_rows_per_group": 16_000_000,
+            "min_rows_per_group": 8_000_000,
+            "max_rows_per_file": 48_000_000,
+        },
     )
 
 
@@ -735,6 +740,21 @@ final_df = (
 
 # Write the final result
 create_or_replace_delta_table(final_df, imdb_table_path)
+
+# METADATA ********************
+
+# META {
+# META   "language": "python",
+# META   "language_group": "jupyter_python"
+# META }
+
+# MARKDOWN ********************
+
+# # Refresh Semantic Model
+
+# CELL ********************
+
+fabric.refresh_dataset("IMDB Model", refresh_type = "full")
 
 # METADATA ********************
 
