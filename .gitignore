@@ -1,0 +1,4 @@
+# Power BI specific
+**/.pbi/localSettings.json
+**/.pbi/cache.abf
+**/.pbi/editorSettings.json
