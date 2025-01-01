@@ -2,11 +2,11 @@
   "$schema": "https://developer.microsoft.com/json-schemas/fabric/gitIntegration/platformProperties/2.0.0/schema.json",
   "metadata": {
     "type": "Notebook",
-    "displayName": "Prepare IMDB Data Polars",
+    "displayName": "Prepare IMDB Data Spark",
     "description": "New notebook"
   },
   "config": {
     "version": "2.0",
-    "logicalId": "8dd58804-e05b-48fc-a401-69ddc8c6d63a"
+    "logicalId": "dba499ad-6e37-436a-9c2f-9d5715a2f451"
   }
 }

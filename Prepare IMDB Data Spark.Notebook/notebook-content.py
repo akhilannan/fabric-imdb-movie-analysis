@@ -4,8 +4,7 @@
 
 # META {
 # META   "kernel_info": {
-# META     "name": "jupyter",
-# META     "jupyter_kernel_name": "python3.11"
+# META     "name": "synapse_pyspark"
 # META   },
 # META   "dependencies": {
 # META     "lakehouse": {
@@ -18,29 +17,13 @@
 
 # MARKDOWN ********************
 
-# # Configure Compute
-
-# CELL ********************
-
-# MAGIC %%configure
-# MAGIC {
-# MAGIC     "vCores": 4
-# MAGIC }
-
-# METADATA ********************
-
-# META {
-# META   "language": "python",
-# META   "language_group": "jupyter_python"
-# META }
-
-# MARKDOWN ********************
-
 # # Import Libraries
 
 # CELL ********************
 
-import polars as pl
+from pyspark.sql import functions as F
+from pyspark.sql import types as T
+from pyspark.sql.window import Window
 import requests
 from bs4 import BeautifulSoup
 from datetime import date
@@ -235,11 +218,11 @@ def parse_box_office_data(url):
             continue
             
         movie_dict = {
-            "tconst": None,
-            "rnk": None,
-            "type": None,
+            "tconst": "NA",
+            "rnk": -1,
+            "type": "NA",
             "movie_name": None,
-            "movie_year": None,
+            "movie_year": -1,
             "box_office": int(row_cols[2].text.replace("$", "").replace(",", "")),
             "url": url
         }
@@ -282,8 +265,8 @@ def parse_imdb_json_data(url):
     for rank, item in enumerate(edges, start=1):
         node = item.get("node", {}) or item.get("item", {})
         movie = {
-            "tconst": node.get("id") or item.get("titleId"),
-            "rnk": item.get("currentRank") or rank,
+            "tconst": node.get("id") or item.get("titleId") or "NA",
+            "rnk": item.get("currentRank") or rank or -1,
             "type": url.split("/")[-1] if IMDB_SEARCH_URL in url else url.split("/")[-2],
             "movie_name": node.get("titleText", {}).get("text") or item.get("titleText"),
             "movie_year": node.get("releaseYear", {}).get("year") or item.get("releaseYear"),
@@ -462,24 +445,26 @@ def create_or_replace_delta_table(df, path: str, engine: str = "pyarrow") -> Non
 PRIMARY_LANGUAGE_PATTERN = ".*primary_language.*"
 POPULAR_MOVIE_PATTERN = ".*release_date.*moviemeter.*"
 
-# 1. Create DataFrame and Apply UDF (scrape_movie_data equivalent)
-imdb_df = scrape_and_convert_data(url_list, scrape_movie_data_threaded, "polars")
-lang_df = scrape_and_convert_data(LANGUAGE_URL, extract_lang_data, "polars")
+imdb_df = scrape_and_convert_data(url_list, scrape_movie_data_threaded, "spark", spark)
+lang_df = scrape_and_convert_data(LANGUAGE_URL, extract_lang_data, "spark", spark)
 
-# 2. Join with Language DataFrame and extract language code using a conditional join
-imdb_df = imdb_df.filter(pl.col("tconst").is_not_null()).join(
-    lang_df,
-    left_on=pl.when(pl.col("type").str.contains(PRIMARY_LANGUAGE_PATTERN))
-    .then(pl.col("type").str.extract(r"primary_language=([a-z]+)", 1))
-    .otherwise(None),
-    right_on="lang_code",
-    how="left",
+imdb_df = (
+    imdb_df.alias("imd")
+    .filter(F.col("imd.tconst").isNotNull())
+    .join(
+        lang_df.alias("lng"),
+        on=F.when(
+            F.col("imd.type").like(PRIMARY_LANGUAGE_PATTERN),
+            F.split(F.col("imd.type"), "primary_language=")[1].substr(1, 2),
+        ).otherwise(None)
+        == F.col("lng.lang_code"),
+        how="left",
+    )
 )
 
-# 3. Define Conditional Columns using a dictionary
 conditional_columns = {
-    "box_office": pl.col("box_office") >= 0,
-    "is_in_top_250": pl.col("type").is_in(
+    "box_office": F.col("imd.box_office") >= 0,
+    "is_in_top_250": F.col("imd.type").isin(
         [
             "toptv",
             "top",
@@ -489,44 +474,34 @@ conditional_columns = {
             "top-rated-telugu-movies",
         ]
     ),
-    "is_in_top_1000": pl.col("type").str.contains("top_1000"),
-    "is_popular": pl.col("type").str.contains(POPULAR_MOVIE_PATTERN),
-    "is_primary_lang": pl.col("type").str.contains(PRIMARY_LANGUAGE_PATTERN),
-    "is_asc": pl.col("type").str.contains(",asc"),
-    "is_desc": pl.col("type").str.contains(",desc"),
+    "is_in_top_1000": F.col("imd.type").like("%top_1000%"),
+    "is_popular": F.col("imd.type").like(POPULAR_MOVIE_PATTERN),
+    "is_primary_lang": F.col("imd.type").like(PRIMARY_LANGUAGE_PATTERN),
+    "is_asc": F.col("imd.type").like("%,asc%"),
+    "is_desc": F.col("imd.type").like("%,desc%"),
 }
 
-# 4. Select Final Columns with dynamic conditional column creation and inline rank adjustment
 imdb_df = imdb_df.select(
-    [
-        "tconst",
-        "lang_name",
-        (
-            pl.col("rnk")
-            + pl.when(pl.col("type").str.contains(POPULAR_MOVIE_PATTERN))
-            .then(
-                pl.col("type").str.extract(r"moviemeter=(\d+),", 1).cast(pl.Int64) - 1
-            )
-            .otherwise(0)
-        ).alias("rnk"),
-        pl.col("type").alias("url_type"),
-        *[
-            pl.when(condition)
-            .then(
-                pl.lit("Y")
-                if (is_bool_col := col_name.startswith("is_"))
-                else pl.col(col_name)
-            )
-            .otherwise(pl.lit("N") if is_bool_col else None)
-            .alias(col_name)
-            for col_name, condition in conditional_columns.items()
-        ],
-    ]
+    F.col("imd.tconst"),
+    F.col("lng.lang_name"),
+    (
+        F.col("imd.rnk")
+        + F.when(
+            F.col("imd.type").like(POPULAR_MOVIE_PATTERN),
+            F.regexp_extract("imd.type", r"moviemeter=(\d+),", 1).cast("int") - 1,
+        ).otherwise(0)
+    ).alias("rnk"),
+    F.col("imd.type").alias("url_type"),
+    *[
+        F.when(condition, F.lit("Y") if col_name.startswith("is_") else F.col(f"imd.{col_name}"))
+        .otherwise(F.lit("N") if col_name.startswith("is_") else None)
+        .alias(col_name)
+        for col_name, condition in conditional_columns.items()
+    ],
 )
 
-# 5. Create or Replace Delta Table
 create_or_replace_delta_table(
-    imdb_df, delta_table_path(silver_schema, "t_imdb_top"), "polars"
+    imdb_df, delta_table_path(silver_schema, "t_imdb_top"), "spark"
 )
 
 
@@ -543,18 +518,16 @@ create_or_replace_delta_table(
 
 # CELL ********************
 
-# Create a Polars DataFrame
-bo_df = scrape_and_convert_data(yearly_box_office_url_list, scrape_movie_data_threaded, "polars")
+bo_df = scrape_and_convert_data(yearly_box_office_url_list, scrape_movie_data_threaded, "spark", spark)
 
-# Filter out rows with null movie_name and select the desired columns
-bo_df = bo_df.filter(pl.col("movie_name").is_not_null()).select(
-    pl.col("movie_name"),
-    pl.col("movie_year"),
-    pl.col("box_office"),
+bo_df = bo_df.filter(F.col("movie_name").isNotNull()).select(
+    F.col("movie_name"),
+    F.col("movie_year"),
+    F.col("box_office"),
 )
 
 create_or_replace_delta_table(
-    bo_df, delta_table_path(silver_schema, "t_bo"), "polars"
+    bo_df, delta_table_path(silver_schema, "t_bo"), "spark"
 )
 
 # METADATA ********************
@@ -572,53 +545,55 @@ create_or_replace_delta_table(
 
 def load_table(file):
     bronze_file_path = bronze_path + file
+    spark_file_path = bronze_file_path.replace('/lakehouse/default/','')
     urlretrieve(DATASET_URL + file, bronze_file_path)
-    table_name = "t_" + file.replace('.tsv.gz', '').replace(".", "_")
+    table_name = "t_" + file.replace(".tsv.gz", "").replace(".", "_")
 
     # Define schema with specified data types
     schema = {
-        "primaryTitle": pl.String,
-        "averageRating": pl.Float64,
-        "numVotes": pl.Int64,
-        "startYear": pl.Int64,
-        "endYear": pl.Int64,
-        "deathYear": pl.Int64,
-        "birthYear": pl.Int64,
-        "runtimeMinutes": pl.Int64,
-        "isAdult": pl.Int8,
+        "primaryTitle": T.StringType(),
+        "averageRating": T.FloatType(),
+        "numVotes": T.IntegerType(),
+        "startYear": T.IntegerType(),
+        "endYear": T.IntegerType(),
+        "deathYear": T.IntegerType(),
+        "birthYear": T.IntegerType(),
+        "runtimeMinutes": T.IntegerType(),
+        "isAdult": T.IntegerType(),
     }
 
     # Read the CSV file, handling potential errors more concisely.
-    df = pl.scan_csv(
-        bronze_file_path,
-        separator="\t",
-        null_values = "\\N",
-        infer_schema_length=0,
-        has_header=True,
-        new_columns=None,
-        try_parse_dates=False,
-        quote_char=None,
-        low_memory=True,
+    df = (
+        spark.read.format("csv")
+        .option("inferSchema", "false")
+        .option("header", "true")
+        .option("delimiter", "\t")
+        .option("nullValue", "\\N")
+        .load(spark_file_path)
     )
 
     # Get column names
-    column_names = df.collect_schema().names()
+    column_names = df.columns
 
     # Apply schema only to existing columns
-    df = df.with_columns(
-        [
-            pl.col(col_name).cast(data_type, strict=False)
+    df = df.withColumns(
+        {
+            col_name: F.col(col_name).cast(data_type)
             for col_name, data_type in schema.items()
             if col_name in column_names
-        ]
+        }
     )
 
     # Write to Delta format
-    create_or_replace_delta_table(df, delta_table_path(silver_schema, table_name), "polars")
+    create_or_replace_delta_table(
+        df, delta_table_path(silver_schema, table_name), "spark"
+    )
+
 
 # Call the function in parallel
 with ThreadPoolExecutor(max_workers=parallelism) as executor:
     executor.map(lambda file: load_table(file), file_list)
+
 
 # METADATA ********************
 
@@ -633,174 +608,160 @@ with ThreadPoolExecutor(max_workers=parallelism) as executor:
 
 # CELL ********************
 
-# Get Crew information
-crew_df = pl.concat([
-    pl.scan_delta(delta_table_path(silver_schema, "t_title_principals"))
-    .filter(pl.col("category").is_in(["actor", "actress"]))
-    .select(["tconst", "category", "nconst"]),
-    
-    pl.scan_delta(delta_table_path(silver_schema, "t_title_crew"))
-    .filter(pl.col("directors").is_not_null())
-    .select([
-        "tconst",
-        pl.lit("director").alias("category"), 
-        pl.col("directors").str.split(",").alias("nconst")
-    ]).explode("nconst")
-], how="vertical")
+def get_delta_table(schema, table):
+    return spark.read.format("delta").load(delta_table_path(schema, table))
 
-# Get Box office information
-box_office_df = (
-    pl.scan_delta(delta_table_path(silver_schema, "t_bo"))
-    .join(
-        pl.scan_delta(delta_table_path(silver_schema, "t_title_basics")),
-        left_on=[
-            "movie_name",
-            "movie_year",
-        ],
-        right_on=[
-            "primaryTitle",
-            "startYear",
-        ],
-        how="inner"
-    )
-    .join(
-        pl.scan_delta(delta_table_path(silver_schema, "t_title_ratings")),
-        left_on="tconst",
-        right_on="tconst",
-        how="inner"
-    )
-    .filter(pl.col("titleType") == "movie")
-    .with_columns(
-        pl.col("numVotes")
-        .rank("dense", descending=True)
-        .over(["movie_name","movie_year"])
-        .alias("vote_rank"),
-    )
-    .with_columns(
-        pl.when(pl.col("vote_rank") == 1)
-        .then(
-            pl.col("box_office").rank("dense", descending=True)
-            .over(["movie_name","movie_year"])
+
+crew_info = (
+    get_delta_table(silver_schema, "t_title_principals")
+    .filter(F.col("category").isin(["actor", "actress"]))
+    .select("tconst", "category", "nconst")
+    .unionAll(
+        get_delta_table(silver_schema, "t_title_crew")
+        .filter(F.col("directors").isNotNull())
+        .select(
+            "tconst",
+            F.lit("director").alias("category"),
+            F.explode(F.split(F.col("directors"), ",")).alias("nconst"),
         )
-        .otherwise(1)
-        .alias("box_office_rank")
+    )
+)
+
+ranked_boxoffice = (
+    get_delta_table(silver_schema, "t_bo")
+    .alias("tbo")
+    .join(
+        get_delta_table(silver_schema, "t_title_basics").alias("tbs"),
+        (F.col("tbo.movie_name") == F.col("tbs.primaryTitle"))
+        & (F.col("tbo.movie_year") == F.col("tbs.startYear"))
+        & (F.col("tbs.titleType") == "movie"),
+        "inner",
+    )
+    .join(
+        get_delta_table(silver_schema, "t_title_ratings").alias("trt"),
+        F.col("trt.tconst") == F.col("tbs.tconst"),
+        "inner",
+    )
+    .filter(F.col("tbo.box_office").isNotNull())
+    .withColumn(
+        "rnk",
+        F.row_number().over(
+            Window.partitionBy("tbo.movie_name", "tbo.movie_year").orderBy(
+                F.col("trt.numvotes").desc(), F.col("tbo.box_office").desc()
+            )
+        ),
+    )
+    .filter(F.col("rnk") == 1)
+    .select("tbs.tconst", "tbo.box_office")
+)
+
+final_df = (
+    get_delta_table(silver_schema, "t_title_basics")
+    .alias("tbs")
+    .join(
+        get_delta_table(silver_schema, "t_title_ratings").alias("trt"),
+        F.col("trt.tconst") == F.col("tbs.tconst"),
+        "left_outer",
+    )
+    .join(
+        crew_info.alias("ci"), F.col("ci.tconst") == F.col("tbs.tconst"), "left_outer"
+    )
+    .join(
+        get_delta_table(silver_schema, "t_name_basics").alias("tnb"),
+        F.col("tnb.nconst") == F.col("ci.nconst"),
+        "left_outer",
+    )
+    .join(
+        get_delta_table(silver_schema, "t_imdb_top").alias("imd"),
+        F.col("imd.tconst") == F.col("tbs.tconst"),
+        "left_outer",
+    )
+    .join(
+        ranked_boxoffice.alias("rbo"),
+        F.col("rbo.tconst") == F.col("tbs.tconst"),
+        "left_outer",
     )
     .filter(
-        (pl.col("vote_rank") == 1) &
-        (pl.col("box_office_rank") == 1)
+        F.col("tbs.titletype").isin(
+            "movie", "tvMiniSeries", "short", "tvSeries", "tvShort", "tvSpecial"
+        )
     )
-    .select(["tconst", "box_office"])
+    .groupBy("tbs.tconst")
+    .agg(
+        F.max("tbs.titletype").alias("title_type"),
+        F.max("tbs.primarytitle").alias("primary_title"),
+        F.max("tbs.originaltitle").alias("original_title"),
+        F.max("tbs.startyear").alias("release_year"),
+        F.max(F.when(F.col("tbs.isadult") == 1, "Y").otherwise("N")).alias("is_adult"),
+        F.max("tbs.runtimeminutes").alias("runtime_min"),
+        F.max("tbs.genres").alias("genres"),
+        F.max("trt.averagerating").alias("avg_rating"),
+        F.max("trt.numvotes").alias("num_votes"),
+        F.coalesce(F.max("imd.box_office"), F.max("rbo.box_office")).alias(
+            "box_office"
+        ),
+        F.max(F.when(F.col("imd.is_in_top_250") == "Y", F.col("imd.rnk"))).alias(
+            "top_250_rnk"
+        ),
+        F.max(F.when(F.col("imd.is_in_top_1000") == "Y", F.col("imd.rnk"))).alias(
+            "top_1000_rnk"
+        ),
+        F.max(F.when(F.col("imd.is_popular") == "Y", F.col("imd.rnk"))).alias(
+            "popularity_rnk"
+        ),
+        F.max(
+            F.when(
+                (F.col("imd.is_primary_lang") == "Y") & (F.col("imd.is_asc") == "Y"),
+                F.col("imd.rnk"),
+            )
+        ).alias("language_popularity_rnk"),
+        F.max(
+            F.when(
+                (F.col("imd.is_primary_lang") == "Y") & (F.col("imd.is_desc") == "Y"),
+                F.col("imd.rnk"),
+            )
+        ).alias("language_votes_rnk"),
+        F.coalesce(F.max("imd.is_in_top_1000"), F.lit("N")).alias("is_top_1000_movies"),
+        F.concat_ws("; ", F.collect_set("imd.lang_name")).alias("language_lst"),
+        F.concat_ws(
+            "; ",
+            F.collect_set(
+                F.when(F.col("ci.category") == "director", F.col("tnb.primaryname"))
+            ),
+        ).alias("director_lst"),
+        F.concat_ws(
+            "; ",
+            F.collect_set(
+                F.when(F.col("ci.category") == "actor", F.col("tnb.primaryname"))
+            ),
+        ).alias("actor_lst"),
+        F.concat_ws(
+            "; ",
+            F.collect_set(
+                F.when(F.col("ci.category") == "actress", F.col("tnb.primaryname"))
+            ),
+        ).alias("actress_lst"),
+        F.current_date().alias("last_refresh_date"),
+    )
+    .withColumn(
+        "overall_popularity_rnk",
+        F.row_number().over(
+            Window.orderBy(
+                F.col("popularity_rnk").asc_nulls_last(),
+                F.col("language_popularity_rnk").asc_nulls_last(),
+                F.col("top_250_rnk").asc_nulls_last(),
+                F.col("top_1000_rnk").asc_nulls_last(),
+                F.col("language_votes_rnk").asc_nulls_last(),
+                F.col("num_votes").desc_nulls_last(),
+            )
+        ),
+    )
 )
 
-# Final dataframe processing
-final_df = (
-    pl.scan_delta(delta_table_path(silver_schema, "t_title_basics"))
-    .join(
-        pl.scan_delta(delta_table_path(silver_schema, "t_title_ratings")),
-        left_on="tconst",
-        right_on="tconst",
-        how="left"
-    )
-    .join(
-        crew_df,
-        left_on="tconst",
-        right_on="tconst",
-        how="left"
-    )
-    .join(
-        pl.scan_delta(delta_table_path(silver_schema, "t_name_basics")),
-        left_on="nconst",
-        right_on="nconst",
-        how="left"
-    )
-    .join(
-        pl.scan_delta(delta_table_path(silver_schema, "t_imdb_top")),
-        left_on="tconst",
-        right_on="tconst",
-        how="left"
-    )
-    .join(
-        box_office_df,
-        left_on="tconst",
-        right_on="tconst",
-        how="left"
-    )
-    .filter(pl.col("titleType").is_in([
-        "movie", "tvMiniSeries", "short", "tvSeries", "tvShort", "tvSpecial"
-    ]))
-    .group_by("tconst")
-    .agg([
-        pl.col("titleType").max().alias("title_type"),
-        pl.col("primaryTitle").max().alias("primary_title"),
-        pl.col("originalTitle").max().alias("original_title"),
-        pl.col("startYear").max().alias("release_year"),
-        pl.when(pl.col("isAdult") == 1)
-            .then(pl.lit("Y"))
-            .otherwise(pl.lit("N"))
-            .max()
-            .alias("is_adult"),
-        pl.col("runtimeMinutes").max().alias("runtime_min"),
-        pl.col("genres").max().alias("genres"),
-        pl.col("averageRating").max().alias("avg_rating"),
-        pl.col("numVotes").max().alias("num_votes"),
-        pl.coalesce(
-            [
-                pl.col("box_office"),
-                pl.col("box_office_right")
-            ]
-        ).abs().max().alias("box_office"),
-        pl.when(pl.col("is_in_top_250") == "Y")
-            .then(pl.col("rnk"))
-            .max()
-            .alias("top_250_rnk"),
-        pl.when(pl.col("is_in_top_1000") == "Y")
-            .then(pl.col("rnk"))
-            .max()
-            .alias("top_1000_rnk"),
-        pl.when(pl.col("is_popular") == "Y")
-            .then(pl.col("rnk"))
-            .max()
-            .alias("popularity_rnk"),
-        pl.when((pl.col("is_primary_lang") == "Y") & (pl.col("is_asc") == "Y"))
-            .then(pl.col("rnk"))
-            .max()
-            .alias("language_popularity_rnk"),
-        pl.when((pl.col("is_primary_lang") == "Y") & (pl.col("is_desc") == "Y"))
-            .then(pl.col("rnk"))
-            .max()
-            .alias("language_votes_rnk"),
-        pl.coalesce(
-            pl.col("is_in_top_1000").first(),
-            pl.lit("N")
-        ).alias("is_top_1000_movies"),
-        pl.col("lang_name").unique().str.concat("; ").alias("language_lst"),
-        pl.when(pl.col("category") == "director")
-            .then(pl.col("primaryName"))
-            .str.concat("; ")
-            .alias("director_lst"),
-        pl.when(pl.col("category") == "actor")
-            .then(pl.col("primaryName"))
-            .str.concat("; ")
-            .alias("actor_lst"),
-        pl.when(pl.col("category") == "actress")
-            .then(pl.col("primaryName"))
-            .str.concat("; ")
-            .alias("actress_lst"),
-        pl.lit(date.today()).alias("last_refresh_date")
-    ])
-    .sort(by=[
-        pl.col("popularity_rnk"),
-        pl.col("language_popularity_rnk"),
-        pl.col("top_250_rnk"),
-        pl.col("top_1000_rnk"),
-        pl.col("language_votes_rnk"),
-        pl.col("num_votes").sort(descending=True),
-    ], nulls_last=True)
-    .with_row_index("overall_popularity_rnk")
-    .with_columns((pl.col("overall_popularity_rnk") + 1).alias("overall_popularity_rnk"))
+create_or_replace_delta_table(
+    final_df, delta_table_path(gold_schema, "t_imdb"), "spark"
 )
 
-create_or_replace_delta_table(final_df, delta_table_path(gold_schema, "t_imdb"), "polars")
 
 # METADATA ********************
 
