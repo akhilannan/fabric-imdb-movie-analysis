@@ -235,11 +235,11 @@ def parse_box_office_data(url):
             continue
             
         movie_dict = {
-            "tconst": None,
-            "rnk": None,
-            "type": None,
+            "tconst": "NA",
+            "rnk": -1,
+            "type": "NA",
             "movie_name": None,
-            "movie_year": None,
+            "movie_year": -1,
             "box_office": int(row_cols[2].text.replace("$", "").replace(",", "")),
             "url": url
         }
@@ -282,8 +282,8 @@ def parse_imdb_json_data(url):
     for rank, item in enumerate(edges, start=1):
         node = item.get("node", {}) or item.get("item", {})
         movie = {
-            "tconst": node.get("id") or item.get("titleId"),
-            "rnk": item.get("currentRank") or rank,
+            "tconst": node.get("id") or item.get("titleId") or "NA",
+            "rnk": item.get("currentRank") or rank or -1,
             "type": url.split("/")[-1] if IMDB_SEARCH_URL in url else url.split("/")[-2],
             "movie_name": node.get("titleText", {}).get("text") or item.get("titleText"),
             "movie_year": node.get("releaseYear", {}).get("year") or item.get("releaseYear"),
