@@ -158,8 +158,6 @@ url_list += [
     for n in range(1, 2000, 50)
 ]
 
-url_list += [f"{BOXOFFICE_CHART}{n}" for n in range(0, 1000, 200)]
-
 # METADATA ********************
 
 # META {
@@ -173,9 +171,7 @@ url_list += [f"{BOXOFFICE_CHART}{n}" for n in range(0, 1000, 200)]
 
 # CELL ********************
 
-current_year = date.today().year
-rng = range(1977, current_year + 1, 1)
-yearly_box_office_url_list = [BOXOFFICE_YEAR + str(n) for n in rng]
+yearly_box_office_url_list = [BOXOFFICE_YEAR + str(n) for n in range(1977, date.today().year + 1)] + [f"{BOXOFFICE_CHART}{n}" for n in range(0, 10000, 200)]
 
 # METADATA ********************
 
@@ -238,7 +234,7 @@ def parse_box_office_data(url):
             "tconst": "NA",
             "rnk": -1,
             "type": "NA",
-            "movie_name": None,
+            "movie_name": row_cols[1].text,
             "movie_year": -1,
             "box_office": int(row_cols[2].text.replace("$", "").replace(",", "")),
             "url": url
@@ -246,14 +242,14 @@ def parse_box_office_data(url):
         
         if is_yearly:
             movie_dict.update({
-                "movie_name": row_cols[1].text,
                 "movie_year": int(url.split("/")[-1])
             })
         else:
             movie_dict.update({
                 "type": url.split("/")[-2],
                 "rnk": int(row_cols[0].text.replace(",", "")),
-                "tconst": re.search(r"(tt\d+)", row_cols[1].find("a")["href"]).group(1)
+                "tconst": re.search(r"(tt\d+)", row_cols[1].find("a")["href"]).group(1),
+                "movie_year": int(row_cols[7].text)
             })
             
         movie_data.append(movie_dict)
@@ -398,7 +394,7 @@ def scrape_and_convert_data(urls, data_extractor, engine="pyarrow", spark=None):
         data_dict = {col: [entry.get(col) for entry in scraped_data] for col in column_names}
         return pa.Table.from_pydict(data_dict)
     elif engine == "polars":
-        return pl.DataFrame(scraped_data)
+        return pl.DataFrame(scraped_data).lazy()
     else:
         raise ValueError(f"Invalid engine: {engine}. Choose 'pyarrow', 'polars', or 'spark'.")
 
@@ -455,6 +451,90 @@ def create_or_replace_delta_table(df, path: str, engine: str = "pyarrow") -> Non
 
 # MARKDOWN ********************
 
+# # Function for parallel table load
+
+# CELL ********************
+
+def parallel_load_tables(file_list, parallelism, load_table_func):
+  """Loads multiple tables in parallel using a ThreadPoolExecutor.
+
+  Args:
+    file_list: A list of file paths representing the tables to load.
+    parallelism: The maximum number of threads to use for parallel processing.
+    load_table_func: A function that takes a file path as input and loads the 
+                     corresponding table.
+  """
+  with ThreadPoolExecutor(max_workers=parallelism) as executor:
+    executor.map(load_table_func, file_list)
+
+# METADATA ********************
+
+# META {
+# META   "language": "python",
+# META   "language_group": "jupyter_python"
+# META }
+
+# MARKDOWN ********************
+
+# # Load IMDB FULL data
+
+# CELL ********************
+
+def load_table(file):
+    bronze_file_path = bronze_path + file
+    urlretrieve(DATASET_URL + file, bronze_file_path)
+    table_name = "t_" + file.replace(".tsv.gz", "").replace(".", "_")
+
+    schema = {
+        "primaryTitle": pl.String,
+        "averageRating": pl.Float64,
+        "numVotes": pl.Int64,
+        "startYear": pl.Int64,
+        "endYear": pl.Int64,
+        "deathYear": pl.Int64,
+        "birthYear": pl.Int64,
+        "runtimeMinutes": pl.Int64,
+        "isAdult": pl.Int8,
+    }
+
+    df = pl.scan_csv(
+        bronze_file_path,
+        separator="\t",
+        null_values="\\N",
+        infer_schema_length=0,
+        has_header=True,
+        new_columns=None,
+        try_parse_dates=False,
+        quote_char=None,
+        low_memory=True,
+    )
+
+    column_names = df.collect_schema().names()
+
+    df = df.with_columns(
+        [
+            pl.col(col_name).cast(data_type, strict=False)
+            for col_name, data_type in schema.items()
+            if col_name in column_names
+        ]
+    )
+
+    create_or_replace_delta_table(
+        df, delta_table_path(silver_schema, table_name), "polars"
+    )
+
+
+parallel_load_tables(file_list, parallelism, load_table)
+
+# METADATA ********************
+
+# META {
+# META   "language": "python",
+# META   "language_group": "jupyter_python"
+# META }
+
+# MARKDOWN ********************
+
 # # Extract data for IMDB URLs
 
 # CELL ********************
@@ -462,11 +542,9 @@ def create_or_replace_delta_table(df, path: str, engine: str = "pyarrow") -> Non
 PRIMARY_LANGUAGE_PATTERN = ".*primary_language.*"
 POPULAR_MOVIE_PATTERN = ".*release_date.*moviemeter.*"
 
-# 1. Create DataFrame and Apply UDF (scrape_movie_data equivalent)
 imdb_df = scrape_and_convert_data(url_list, scrape_movie_data_threaded, "polars")
 lang_df = scrape_and_convert_data(LANGUAGE_URL, extract_lang_data, "polars")
 
-# 2. Join with Language DataFrame and extract language code using a conditional join
 imdb_df = imdb_df.filter(pl.col("tconst").is_not_null()).join(
     lang_df,
     left_on=pl.when(pl.col("type").str.contains(PRIMARY_LANGUAGE_PATTERN))
@@ -476,9 +554,7 @@ imdb_df = imdb_df.filter(pl.col("tconst").is_not_null()).join(
     how="left",
 )
 
-# 3. Define Conditional Columns using a dictionary
 conditional_columns = {
-    "box_office": pl.col("box_office") >= 0,
     "is_in_top_250": pl.col("type").is_in(
         [
             "toptv",
@@ -496,7 +572,6 @@ conditional_columns = {
     "is_desc": pl.col("type").str.contains(",desc"),
 }
 
-# 4. Select Final Columns with dynamic conditional column creation and inline rank adjustment
 imdb_df = imdb_df.select(
     [
         "tconst",
@@ -511,20 +586,12 @@ imdb_df = imdb_df.select(
         ).alias("rnk"),
         pl.col("type").alias("url_type"),
         *[
-            pl.when(condition)
-            .then(
-                pl.lit("Y")
-                if (is_bool_col := col_name.startswith("is_"))
-                else pl.col(col_name)
-            )
-            .otherwise(pl.lit("N") if is_bool_col else None)
-            .alias(col_name)
+            pl.when(condition).then(pl.lit("Y")).otherwise(pl.lit("N")).alias(col_name)
             for col_name, condition in conditional_columns.items()
         ],
     ]
 )
 
-# 5. Create or Replace Delta Table
 create_or_replace_delta_table(
     imdb_df, delta_table_path(silver_schema, "t_imdb_top"), "polars"
 )
@@ -543,82 +610,61 @@ create_or_replace_delta_table(
 
 # CELL ********************
 
-# Create a Polars DataFrame
-bo_df = scrape_and_convert_data(yearly_box_office_url_list, scrape_movie_data_threaded, "polars")
-
-# Filter out rows with null movie_name and select the desired columns
-bo_df = bo_df.filter(pl.col("movie_name").is_not_null()).select(
-    pl.col("movie_name"),
-    pl.col("movie_year"),
-    pl.col("box_office"),
+bo_df = scrape_and_convert_data(
+    yearly_box_office_url_list, scrape_movie_data_threaded, "polars"
 )
 
-create_or_replace_delta_table(
-    bo_df, delta_table_path(silver_schema, "t_bo"), "polars"
+bo_df_w_id = bo_df.filter(pl.col("tconst") != "NA")
+
+bo_df_wo_id = (
+    bo_df.filter(pl.col("tconst") == "NA")
+    .drop("tconst")
+    .join(
+        pl.scan_delta(delta_table_path(silver_schema, "t_title_basics")).filter(
+            pl.col("titleType") == "movie"
+        ),
+        left_on=["movie_name", "movie_year"],
+        right_on=["primaryTitle", "startYear"],
+        how="inner",
+    )
+    .join(
+        pl.scan_delta(delta_table_path(silver_schema, "t_title_ratings")),
+        on="tconst",
+        how="inner",
+    )
+    .join(bo_df_w_id, on="tconst", how="anti")
+    .join(
+        bo_df_w_id,
+        left_on=["movie_name", "movie_year", "box_office"],
+        right_on=["movie_name", "movie_year", "box_office"],
+        how="anti",
+    )
+    .with_columns(
+        pl.col("numVotes")
+        .rank("dense", descending=True)
+        .over(["movie_name", "movie_year"])
+        .alias("vote_rank"),
+    )
+    .with_columns(
+        pl.when(pl.col("vote_rank") == 1)
+        .then(
+            pl.col("box_office")
+            .rank("dense", descending=True)
+            .over(["movie_name", "movie_year"])
+        )
+        .otherwise(1)
+        .alias("box_office_rank")
+    )
+    .filter((pl.col("vote_rank") == 1) & (pl.col("box_office_rank") == 1))
+    .select(["tconst", "box_office"])
 )
 
-# METADATA ********************
+bo_df_final = pl.concat(
+    [bo_df_w_id.select(["tconst", "box_office"]), bo_df_wo_id], how="vertical"
+).rename({"box_office": "box_office_usd"})
 
-# META {
-# META   "language": "python",
-# META   "language_group": "jupyter_python"
-# META }
+create_or_replace_delta_table(bo_df_final, delta_table_path(silver_schema, "t_bo"), "polars")
 
-# MARKDOWN ********************
-
-# # Load IMDB FULL data
-
-# CELL ********************
-
-def load_table(file):
-    bronze_file_path = bronze_path + file
-    urlretrieve(DATASET_URL + file, bronze_file_path)
-    table_name = "t_" + file.replace('.tsv.gz', '').replace(".", "_")
-
-    # Define schema with specified data types
-    schema = {
-        "primaryTitle": pl.String,
-        "averageRating": pl.Float64,
-        "numVotes": pl.Int64,
-        "startYear": pl.Int64,
-        "endYear": pl.Int64,
-        "deathYear": pl.Int64,
-        "birthYear": pl.Int64,
-        "runtimeMinutes": pl.Int64,
-        "isAdult": pl.Int8,
-    }
-
-    # Read the CSV file, handling potential errors more concisely.
-    df = pl.scan_csv(
-        bronze_file_path,
-        separator="\t",
-        null_values = "\\N",
-        infer_schema_length=0,
-        has_header=True,
-        new_columns=None,
-        try_parse_dates=False,
-        quote_char=None,
-        low_memory=True,
-    )
-
-    # Get column names
-    column_names = df.collect_schema().names()
-
-    # Apply schema only to existing columns
-    df = df.with_columns(
-        [
-            pl.col(col_name).cast(data_type, strict=False)
-            for col_name, data_type in schema.items()
-            if col_name in column_names
-        ]
-    )
-
-    # Write to Delta format
-    create_or_replace_delta_table(df, delta_table_path(silver_schema, table_name), "polars")
-
-# Call the function in parallel
-with ThreadPoolExecutor(max_workers=parallelism) as executor:
-    executor.map(lambda file: load_table(file), file_list)
 
 # METADATA ********************
 
@@ -633,7 +679,6 @@ with ThreadPoolExecutor(max_workers=parallelism) as executor:
 
 # CELL ********************
 
-# Get Crew information
 crew_df = pl.concat([
     pl.scan_delta(delta_table_path(silver_schema, "t_title_principals"))
     .filter(pl.col("category").is_in(["actor", "actress"]))
@@ -648,51 +693,6 @@ crew_df = pl.concat([
     ]).explode("nconst")
 ], how="vertical")
 
-# Get Box office information
-box_office_df = (
-    pl.scan_delta(delta_table_path(silver_schema, "t_bo"))
-    .join(
-        pl.scan_delta(delta_table_path(silver_schema, "t_title_basics")),
-        left_on=[
-            "movie_name",
-            "movie_year",
-        ],
-        right_on=[
-            "primaryTitle",
-            "startYear",
-        ],
-        how="inner"
-    )
-    .join(
-        pl.scan_delta(delta_table_path(silver_schema, "t_title_ratings")),
-        left_on="tconst",
-        right_on="tconst",
-        how="inner"
-    )
-    .filter(pl.col("titleType") == "movie")
-    .with_columns(
-        pl.col("numVotes")
-        .rank("dense", descending=True)
-        .over(["movie_name","movie_year"])
-        .alias("vote_rank"),
-    )
-    .with_columns(
-        pl.when(pl.col("vote_rank") == 1)
-        .then(
-            pl.col("box_office").rank("dense", descending=True)
-            .over(["movie_name","movie_year"])
-        )
-        .otherwise(1)
-        .alias("box_office_rank")
-    )
-    .filter(
-        (pl.col("vote_rank") == 1) &
-        (pl.col("box_office_rank") == 1)
-    )
-    .select(["tconst", "box_office"])
-)
-
-# Final dataframe processing
 final_df = (
     pl.scan_delta(delta_table_path(silver_schema, "t_title_basics"))
     .join(
@@ -720,7 +720,7 @@ final_df = (
         how="left"
     )
     .join(
-        box_office_df,
+        pl.scan_delta(delta_table_path(silver_schema, "t_bo")),
         left_on="tconst",
         right_on="tconst",
         how="left"
@@ -743,12 +743,7 @@ final_df = (
         pl.col("genres").max().alias("genres"),
         pl.col("averageRating").max().alias("avg_rating"),
         pl.col("numVotes").max().alias("num_votes"),
-        pl.coalesce(
-            [
-                pl.col("box_office"),
-                pl.col("box_office_right")
-            ]
-        ).abs().max().alias("box_office"),
+        pl.col("box_office_usd").max().alias("box_office"),
         pl.when(pl.col("is_in_top_250") == "Y")
             .then(pl.col("rnk"))
             .max()
@@ -788,14 +783,20 @@ final_df = (
             .alias("actress_lst"),
         pl.lit(date.today()).alias("last_refresh_date")
     ])
-    .sort(by=[
-        pl.col("popularity_rnk"),
-        pl.col("language_popularity_rnk"),
-        pl.col("top_250_rnk"),
-        pl.col("top_1000_rnk"),
-        pl.col("language_votes_rnk"),
-        pl.col("num_votes").sort(descending=True),
-    ], nulls_last=True)
+    .sort(
+        by=[
+            pl.col("popularity_rnk"),
+            pl.col("language_popularity_rnk"),
+            pl.col("top_250_rnk"),
+            pl.col("top_1000_rnk"),
+            pl.col("language_votes_rnk"),
+            pl.col("box_office"),
+            pl.col("num_votes"),
+            pl.col("avg_rating"),
+        ],
+        descending=[False, False, False, False, False, True, True, True],
+        nulls_last=True,
+    )
     .with_row_index("overall_popularity_rnk")
     .with_columns((pl.col("overall_popularity_rnk") + 1).alias("overall_popularity_rnk"))
 )

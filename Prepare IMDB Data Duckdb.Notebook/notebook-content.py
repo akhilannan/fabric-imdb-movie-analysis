@@ -157,8 +157,6 @@ url_list += [
     for n in range(1, 2000, 50)
 ]
 
-url_list += [f"{BOXOFFICE_CHART}{n}" for n in range(0, 1000, 200)]
-
 # METADATA ********************
 
 # META {
@@ -172,9 +170,7 @@ url_list += [f"{BOXOFFICE_CHART}{n}" for n in range(0, 1000, 200)]
 
 # CELL ********************
 
-current_year = date.today().year
-rng = range(1977, current_year + 1, 1)
-yearly_box_office_url_list = [BOXOFFICE_YEAR + str(n) for n in rng]
+yearly_box_office_url_list = [BOXOFFICE_YEAR + str(n) for n in range(1977, date.today().year + 1)] + [f"{BOXOFFICE_CHART}{n}" for n in range(0, 10000, 200)]
 
 # METADATA ********************
 
@@ -237,7 +233,7 @@ def parse_box_office_data(url):
             "tconst": "NA",
             "rnk": -1,
             "type": "NA",
-            "movie_name": None,
+            "movie_name": row_cols[1].text,
             "movie_year": -1,
             "box_office": int(row_cols[2].text.replace("$", "").replace(",", "")),
             "url": url
@@ -245,14 +241,14 @@ def parse_box_office_data(url):
         
         if is_yearly:
             movie_dict.update({
-                "movie_name": row_cols[1].text,
                 "movie_year": int(url.split("/")[-1])
             })
         else:
             movie_dict.update({
                 "type": url.split("/")[-2],
                 "rnk": int(row_cols[0].text.replace(",", "")),
-                "tconst": re.search(r"(tt\d+)", row_cols[1].find("a")["href"]).group(1)
+                "tconst": re.search(r"(tt\d+)", row_cols[1].find("a")["href"]).group(1),
+                "movie_year": int(row_cols[7].text)
             })
             
         movie_data.append(movie_dict)
@@ -397,7 +393,7 @@ def scrape_and_convert_data(urls, data_extractor, engine="pyarrow", spark=None):
         data_dict = {col: [entry.get(col) for entry in scraped_data] for col in column_names}
         return pa.Table.from_pydict(data_dict)
     elif engine == "polars":
-        return pl.DataFrame(scraped_data)
+        return pl.DataFrame(scraped_data).lazy()
     else:
         raise ValueError(f"Invalid engine: {engine}. Choose 'pyarrow', 'polars', or 'spark'.")
 
@@ -454,6 +450,31 @@ def create_or_replace_delta_table(df, path: str, engine: str = "pyarrow") -> Non
 
 # MARKDOWN ********************
 
+# # Function for parallel table load
+
+# CELL ********************
+
+def parallel_load_tables(file_list, parallelism, load_table_func):
+  """Loads multiple tables in parallel using a ThreadPoolExecutor.
+
+  Args:
+    file_list: A list of file paths representing the tables to load.
+    parallelism: The maximum number of threads to use for parallel processing.
+    load_table_func: A function that takes a file path as input and loads the 
+                     corresponding table.
+  """
+  with ThreadPoolExecutor(max_workers=parallelism) as executor:
+    executor.map(load_table_func, file_list)
+
+# METADATA ********************
+
+# META {
+# META   "language": "python",
+# META   "language_group": "jupyter_python"
+# META }
+
+# MARKDOWN ********************
+
 # # Set DuckDB Secret
 
 # CELL ********************
@@ -465,6 +486,63 @@ duckdb.sql(f"""
         ACCESS_TOKEN '{notebookutils.credentials.getToken('storage')}'
     )
 """)
+
+# METADATA ********************
+
+# META {
+# META   "language": "python",
+# META   "language_group": "jupyter_python"
+# META }
+
+# MARKDOWN ********************
+
+# # Load IMDB FULL data
+
+# CELL ********************
+
+def load_table(file):
+    con = duckdb.connect()
+
+    bronze_file_path = bronze_path + file
+    urlretrieve(DATASET_URL + file, bronze_file_path)
+    table_name = "t_" + file.replace('.tsv.gz', '').replace(".", "_")
+
+    schema = {
+        "primaryTitle": "VARCHAR",
+        "averageRating": "DOUBLE",
+        "numVotes": "BIGINT",
+        "startYear": "BIGINT",
+        "endYear": "BIGINT",
+        "deathYear": "BIGINT",
+        "birthYear": "BIGINT",
+        "runtimeMinutes": "BIGINT",
+        "isAdult": "TINYINT",
+    }
+
+    detected_columns = con.sql(f"SELECT Columns FROM sniff_csv('{bronze_file_path}', sample_size = 1)").fetchone()[0]
+    cast_statements = [
+        f"CAST({col_info['name']} AS {schema[col_info['name']]}) AS {col_info['name']}"
+        if col_info['name'] in schema
+        else col_info['name']
+        for col_info in detected_columns
+    ]
+
+    create_or_replace_delta_table(
+        con.sql(f"""
+            SELECT {','.join(cast_statements)}
+            FROM read_csv('{bronze_file_path}',
+                             header=true,
+                             delim='\\t',
+                             quote='',
+                             nullstr='\\N',
+                             ignore_errors=false)
+        """).record_batch(),
+        delta_table_path(silver_schema, table_name)
+    )
+
+    con.close()
+
+parallel_load_tables(file_list, parallelism, load_table)
 
 # METADATA ********************
 
@@ -498,9 +576,6 @@ create_or_replace_delta_table(
                 END
             ) AS rnk,
             imd.type AS url_type,
-            CASE 
-                WHEN imd.box_office >= 0 THEN imd.box_office
-            END AS box_office,
             CASE 
                 WHEN imd.type IN (
                     'toptv', 'top', 'top-rated-indian-movies',
@@ -557,78 +632,59 @@ bo_df = scrape_and_convert_data(yearly_box_office_url_list, scrape_movie_data_th
 create_or_replace_delta_table(
     duckdb.sql(f"""
         SELECT
-            movie_name,
-            movie_year,
-            box_office
-        FROM bo_df
-        WHERE movie_name IS NOT NULL
-    """).record_batch(),
-    delta_table_path(silver_schema, "t_bo")
+            tconst,
+            box_office AS box_office_usd
+        FROM
+            bo_df
+        WHERE
+            tconst <> 'NA'
+        UNION ALL
+        SELECT
+            tbs.tconst,
+            tbo.box_office
+        FROM
+            bo_df AS tbo
+        INNER JOIN
+            delta_scan('{delta_table_path(silver_schema, "t_title_basics")}') AS tbs
+            ON tbs.primaryTitle = tbo.movie_name
+            AND tbs.startYear = tbo.movie_year
+            AND tbs.titleType = 'movie'
+        INNER JOIN
+            delta_scan('{delta_table_path(silver_schema, "t_title_ratings")}') AS trt
+            ON trt.tconst = tbs.tconst
+        WHERE
+            tbo.tconst = 'NA'
+            AND NOT EXISTS (
+                SELECT
+                    0
+                FROM
+                    bo_df bo
+                WHERE
+                    bo.tconst = tbs.tconst
+            )
+            AND NOT EXISTS (
+                SELECT
+                    0
+                FROM
+                    bo_df boi
+                WHERE
+                    boi.tconst <> 'NA'
+                    AND boi.movie_name = tbo.movie_name
+                    AND boi.movie_year = tbo.movie_year 
+                    AND boi.box_office = tbo.box_office
+            )
+        QUALIFY ROW_NUMBER() OVER (
+                PARTITION BY
+                    tbo.movie_name,
+                    tbo.movie_year
+                ORDER BY
+                    trt.numvotes DESC,
+                    tbo.box_office DESC
+            ) = 1
+    """
+    ).record_batch(),
+    delta_table_path(silver_schema, "t_bo"),
 )
-
-# METADATA ********************
-
-# META {
-# META   "language": "python",
-# META   "language_group": "jupyter_python"
-# META }
-
-# MARKDOWN ********************
-
-# # Load IMDB FULL data
-
-# CELL ********************
-
-def load_table(file):
-    # Create a new DuckDB connection for this thread
-    con = duckdb.connect()
-
-    # Download file and setup paths
-    bronze_file_path = bronze_path + file
-    urlretrieve(DATASET_URL + file, bronze_file_path)
-    table_name = "t_" + file.replace('.tsv.gz', '').replace(".", "_")
-
-    # Schema mappings for type casting
-    schema = {
-        "primaryTitle": "VARCHAR",
-        "averageRating": "DOUBLE",
-        "numVotes": "BIGINT",
-        "startYear": "BIGINT",
-        "endYear": "BIGINT",
-        "deathYear": "BIGINT",
-        "birthYear": "BIGINT",
-        "runtimeMinutes": "BIGINT",
-        "isAdult": "TINYINT",
-    }
-
-    # Get column information and build cast statements
-    detected_columns = con.sql(f"SELECT Columns FROM sniff_csv('{bronze_file_path}', sample_size = 1)").fetchone()[0]
-    cast_statements = [
-        f"CAST({col_info['name']} AS {schema[col_info['name']]}) AS {col_info['name']}"
-        if col_info['name'] in schema
-        else col_info['name']
-        for col_info in detected_columns
-    ]
-
-    create_or_replace_delta_table(
-        con.sql(f"""
-            SELECT {','.join(cast_statements)}
-            FROM read_csv('{bronze_file_path}',
-                             header=true,
-                             delim='\\t',
-                             quote='',
-                             nullstr='\\N',
-                             ignore_errors=false)
-        """).record_batch(),
-        delta_table_path(silver_schema, table_name)
-    )
-
-    # Close the connection when done
-    con.close()
-
-# Call the function in parallel
-with ThreadPoolExecutor(max_workers=parallelism) as executor:
-    executor.map(lambda file: load_table(file), file_list)
 
 # METADATA ********************
 
@@ -659,23 +715,6 @@ create_or_replace_delta_table(
                 UNNEST(string_to_array(directors, ',')) AS nconst
             FROM delta_scan('{delta_table_path(silver_schema, "t_title_crew")}')
             WHERE directors IS NOT NULL
-        ),
-        ranked_boxoffice AS (
-            SELECT
-                tbs.tconst,
-                tbo.box_office
-            FROM delta_scan('{delta_table_path(silver_schema, "t_bo")}') AS tbo
-            INNER JOIN delta_scan('{delta_table_path(silver_schema, "t_title_basics")}') AS tbs
-                ON tbs.primaryTitle = tbo.movie_name
-                AND tbs.startYear = tbo.movie_year
-                AND tbs.titleType = 'movie'
-            INNER JOIN delta_scan('{delta_table_path(silver_schema, "t_title_ratings")}') AS trt
-                ON trt.tconst = tbs.tconst
-            WHERE tbo.box_office IS NOT NULL
-            QUALIFY ROW_NUMBER() OVER (
-                PARTITION BY tbo.movie_name, tbo.movie_year
-                ORDER BY trt.numvotes DESC, tbo.box_office DESC
-            ) = 1
         )
         SELECT
             tbs.tconst,
@@ -688,7 +727,7 @@ create_or_replace_delta_table(
             MAX(tbs.genres) AS genres,
             MAX(trt.averagerating) AS avg_rating,
             MAX(trt.numvotes) AS num_votes,
-            COALESCE(MAX(imd.box_office), MAX(rbo.box_office)) AS box_office,
+            MAX(tbo.box_office_usd) AS box_office,
             MAX(CASE WHEN imd.is_in_top_250 = 'Y' THEN imd.rnk END) AS top_250_rnk,
             MAX(CASE WHEN imd.is_in_top_1000 = 'Y' THEN imd.rnk END) AS top_1000_rnk,
             MAX(CASE WHEN imd.is_popular = 'Y' THEN imd.rnk END) AS popularity_rnk,
@@ -707,7 +746,9 @@ create_or_replace_delta_table(
                     top_250_rnk ASC NULLS LAST,
                     top_1000_rnk ASC NULLS LAST,
                     language_votes_rnk ASC NULLS LAST,
-                    num_votes DESC NULLS LAST
+                    box_office DESC NULLS LAST,
+                    num_votes DESC NULLS LAST,
+                    avg_rating DESC NULLS LAST
             ) AS overall_popularity_rnk
         FROM delta_scan('{delta_table_path(silver_schema, "t_title_basics")}') AS tbs
         LEFT OUTER JOIN delta_scan('{delta_table_path(silver_schema, "t_title_ratings")}') AS trt
@@ -718,8 +759,8 @@ create_or_replace_delta_table(
             ON tnb.nconst = ci.nconst
         LEFT OUTER JOIN delta_scan('{delta_table_path(silver_schema, "t_imdb_top")}') AS imd
             ON imd.tconst = tbs.tconst
-        LEFT OUTER JOIN ranked_boxoffice AS rbo
-            ON rbo.tconst = tbs.tconst
+        LEFT OUTER JOIN delta_scan('{delta_table_path(silver_schema, "t_bo")}') AS tbo
+            ON tbo.tconst = tbs.tconst
         WHERE tbs.titletype IN ('movie', 'tvMiniSeries', 'short', 'tvSeries', 'tvShort', 'tvSpecial')
         GROUP BY ALL
     """).record_batch(),
