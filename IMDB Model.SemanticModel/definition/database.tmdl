@@ -1,6 +1,3 @@
-database 'IMDB Model'
-	id: 4e3b68fa-80c1-4fc1-8f12-10194d111f6d
+database
 	compatibilityLevel: 1605
-	compatibilityMode: powerBI
-	language: 1033
 

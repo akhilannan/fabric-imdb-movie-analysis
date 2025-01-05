@@ -2,18 +2,32 @@
   "$schema": "https://developer.microsoft.com/json-schemas/fabric/item/report/definition/visualContainer/1.4.0/schema.json",
   "name": "bf7580240a96cae0010d",
   "position": {
-    "x": 624,
-    "y": 106,
+    "x": 625.06666666666672,
+    "y": 105.6,
     "z": 3,
-    "height": 120,
-    "width": 141
+    "height": 120.53333333333333,
+    "width": 637.86666666666667
   },
   "visual": {
-    "visualType": "card",
+    "visualType": "cardVisual",
     "query": {
       "queryState": {
-        "Values": {
+        "Data": {
           "projections": [
+            {
+              "field": {
+                "Measure": {
+                  "Expression": {
+                    "SourceRef": {
+                      "Entity": "IMDB"
+                    }
+                  },
+                  "Property": "Title #"
+                }
+              },
+              "queryRef": "IMDB.Title #",
+              "nativeQueryRef": "Title #"
+            },
             {
               "field": {
                 "Measure": {
@@ -26,6 +40,20 @@
                 }
               },
               "queryRef": "IMDB.Avg Rating"
+            },
+            {
+              "field": {
+                "Measure": {
+                  "Expression": {
+                    "SourceRef": {
+                      "Entity": "IMDB"
+                    }
+                  },
+                  "Property": "Data as of"
+                }
+              },
+              "queryRef": "IMDB.Data as of",
+              "nativeQueryRef": "Data as of"
             }
           ]
         }
@@ -40,7 +68,7 @@
                     "Entity": "IMDB"
                   }
                 },
-                "Property": "Avg Rating"
+                "Property": "Title #"
               }
             },
             "direction": "Descending"
@@ -50,7 +78,66 @@
       }
     },
     "objects": {
-      "labels": [
+      "overFlow": [
+        {
+          "properties": {
+            "overFlowStyle": {
+              "expr": {
+                "Literal": {
+                  "Value": "1D"
+                }
+              }
+            }
+          }
+        }
+      ],
+      "padding": [
+        {
+          "properties": {
+            "paddingSelection": {
+              "expr": {
+                "Literal": {
+                  "Value": "'Normal'"
+                }
+              }
+            }
+          },
+          "selector": {
+            "metadata": "IMDB.Avg Rating"
+          }
+        }
+      ],
+      "outline": [
+        {
+          "properties": {
+            "weight": {
+              "expr": {
+                "Literal": {
+                  "Value": "0D"
+                }
+              }
+            }
+          },
+          "selector": {
+            "metadata": "IMDB.Avg Rating"
+          }
+        },
+        {
+          "properties": {
+            "weight": {
+              "expr": {
+                "Literal": {
+                  "Value": "0D"
+                }
+              }
+            }
+          },
+          "selector": {
+            "id": "default"
+          }
+        }
+      ],
+      "value": [
         {
           "properties": {
             "fontSize": {
@@ -60,6 +147,9 @@
                 }
               }
             }
+          },
+          "selector": {
+            "id": "default"
           }
         }
       ]

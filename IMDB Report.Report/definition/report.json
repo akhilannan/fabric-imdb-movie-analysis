@@ -11,49 +11,6 @@
   "filterConfig": {
     "filters": [
       {
-        "name": "b15955d907008c85b388",
-        "field": {
-          "Column": {
-            "Expression": {
-              "SourceRef": {
-                "Entity": "IMDB"
-              }
-            },
-            "Property": "Is in Top 1000 Movies"
-          }
-        },
-        "howCreated": "User"
-      },
-      {
-        "name": "22aabef752410903ac2a",
-        "field": {
-          "Column": {
-            "Expression": {
-              "SourceRef": {
-                "Entity": "IMDB"
-              }
-            },
-            "Property": "Top 250 Rank"
-          }
-        },
-        "type": "Advanced",
-        "howCreated": "User"
-      },
-      {
-        "name": "352f2821e067bc1e70dc",
-        "field": {
-          "Column": {
-            "Expression": {
-              "SourceRef": {
-                "Entity": "IMDB"
-              }
-            },
-            "Property": "Title Type"
-          }
-        },
-        "howCreated": "User"
-      },
-      {
         "name": "f87287bb47be0584b2b0",
         "field": {
           "Column": {

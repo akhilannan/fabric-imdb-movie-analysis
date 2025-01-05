@@ -188,6 +188,90 @@
             },
             {
               "field": {
+                "Column": {
+                  "Expression": {
+                    "SourceRef": {
+                      "Entity": "IMDB"
+                    }
+                  },
+                  "Property": "Top 250 Movie Rank"
+                }
+              },
+              "queryRef": "IMDB.Top 250 Movie Rank",
+              "nativeQueryRef": "Top 250 Movie Rank"
+            },
+            {
+              "field": {
+                "Column": {
+                  "Expression": {
+                    "SourceRef": {
+                      "Entity": "IMDB"
+                    }
+                  },
+                  "Property": "Top 250 TV Rank"
+                }
+              },
+              "queryRef": "IMDB.Top 250 TV Rank",
+              "nativeQueryRef": "Top 250 TV Rank"
+            },
+            {
+              "field": {
+                "Column": {
+                  "Expression": {
+                    "SourceRef": {
+                      "Entity": "IMDB"
+                    }
+                  },
+                  "Property": "Top Indian Movie Rank"
+                }
+              },
+              "queryRef": "IMDB.Top Indian Movie Rank",
+              "nativeQueryRef": "Top Indian Movie Rank"
+            },
+            {
+              "field": {
+                "Column": {
+                  "Expression": {
+                    "SourceRef": {
+                      "Entity": "IMDB"
+                    }
+                  },
+                  "Property": "Top Malayalam Movie Rank"
+                }
+              },
+              "queryRef": "IMDB.Top Malayalam Movie Rank",
+              "nativeQueryRef": "Top Malayalam Movie Rank"
+            },
+            {
+              "field": {
+                "Column": {
+                  "Expression": {
+                    "SourceRef": {
+                      "Entity": "IMDB"
+                    }
+                  },
+                  "Property": "Top Tamil Movie Rank"
+                }
+              },
+              "queryRef": "IMDB.Top Tamil Movie Rank",
+              "nativeQueryRef": "Top Tamil Movie Rank"
+            },
+            {
+              "field": {
+                "Column": {
+                  "Expression": {
+                    "SourceRef": {
+                      "Entity": "IMDB"
+                    }
+                  },
+                  "Property": "Top Telugu Movie Rank"
+                }
+              },
+              "queryRef": "IMDB.Top Telugu Movie Rank",
+              "nativeQueryRef": "Top Telugu Movie Rank"
+            },
+            {
+              "field": {
                 "Measure": {
                   "Expression": {
                     "SourceRef": {
@@ -197,7 +281,8 @@
                   "Property": "Title #"
                 }
               },
-              "queryRef": "IMDB.Title #"
+              "queryRef": "IMDB.Title #",
+              "nativeQueryRef": "Title #"
             }
           ]
         }
@@ -246,7 +331,7 @@
             "labelDisplayUnits": {
               "expr": {
                 "Literal": {
-                  "Value": "1000000D"
+                  "Value": "1D"
                 }
               }
             },
@@ -312,6 +397,13 @@
               "expr": {
                 "Literal": {
                   "Value": "15D"
+                }
+              }
+            },
+            "wordWrap": {
+              "expr": {
+                "Literal": {
+                  "Value": "false"
                 }
               }
             }
@@ -919,7 +1011,7 @@
             "value": {
               "expr": {
                 "Literal": {
-                  "Value": "263.2255514840333D"
+                  "Value": "323.5469734218776D"
                 }
               }
             }
@@ -1031,7 +1123,7 @@
             "value": {
               "expr": {
                 "Literal": {
-                  "Value": "250D"
+                  "Value": "284.3703703703704D"
                 }
               }
             }
@@ -1045,7 +1137,7 @@
             "value": {
               "expr": {
                 "Literal": {
-                  "Value": "1216D"
+                  "Value": "429.2991719896487D"
                 }
               }
             }
@@ -1094,6 +1186,90 @@
           },
           "selector": {
             "metadata": "IMDB.Languages"
+          }
+        },
+        {
+          "properties": {
+            "value": {
+              "expr": {
+                "Literal": {
+                  "Value": "154D"
+                }
+              }
+            }
+          },
+          "selector": {
+            "metadata": "IMDB.Top 250 Movie Rank"
+          }
+        },
+        {
+          "properties": {
+            "value": {
+              "expr": {
+                "Literal": {
+                  "Value": "129D"
+                }
+              }
+            }
+          },
+          "selector": {
+            "metadata": "IMDB.Top 250 TV Rank"
+          }
+        },
+        {
+          "properties": {
+            "value": {
+              "expr": {
+                "Literal": {
+                  "Value": "172D"
+                }
+              }
+            }
+          },
+          "selector": {
+            "metadata": "IMDB.Top Indian Movie Rank"
+          }
+        },
+        {
+          "properties": {
+            "value": {
+              "expr": {
+                "Literal": {
+                  "Value": "204D"
+                }
+              }
+            }
+          },
+          "selector": {
+            "metadata": "IMDB.Top Malayalam Movie Rank"
+          }
+        },
+        {
+          "properties": {
+            "value": {
+              "expr": {
+                "Literal": {
+                  "Value": "164D"
+                }
+              }
+            }
+          },
+          "selector": {
+            "metadata": "IMDB.Top Tamil Movie Rank"
+          }
+        },
+        {
+          "properties": {
+            "value": {
+              "expr": {
+                "Literal": {
+                  "Value": "175D"
+                }
+              }
+            }
+          },
+          "selector": {
+            "metadata": "IMDB.Top Telugu Movie Rank"
           }
         },
         {

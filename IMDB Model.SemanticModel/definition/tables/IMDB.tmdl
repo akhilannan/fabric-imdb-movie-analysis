@@ -2,8 +2,9 @@ table IMDB
 	lineageTag: 71834acd-68b9-447b-93a9-31279d78bf4c
 	sourceLineageTag: [gold].[t_imdb]
 
-	measure 'Avg Rating' = AVERAGE(IMDB[avg_rating])
-		dataType: double
+	measure 'Avg Rating' =
+			
+			AVERAGE ( IMDB[avg_rating] )
 		formatString: 0.0
 		lineageTag: 6a2e45b0-5dec-4545-8f60-0b9a42128cdf
 
@@ -11,8 +12,9 @@ table IMDB
 
 		changedProperty = FormatString
 
-	measure 'Avg Runtime (mins)' = AVERAGE(IMDB[runtime_min])
-		dataType: double
+	measure 'Avg Runtime (mins)' =
+			
+			AVERAGE ( IMDB[runtime_min] )
 		formatString: 0
 		lineageTag: 065b9401-8ea6-41ef-a6ac-a49dc5fcbc76
 
@@ -20,19 +22,37 @@ table IMDB
 
 		changedProperty = FormatString
 
-	measure 'Box Office $' = SUM(IMDB[box_office])
-		dataType: int64
-		formatString: #,0
+	measure 'Box Office $' =
+			
+			SUM ( IMDB[box_office] )
 		lineageTag: 73a56fdc-904a-4721-b676-c99e20fecd3e
+
+		formatStringDefinition = ```
+				VAR CurrentValue = SELECTEDMEASURE()
+				VAR BaseFormat = "$#,0"
+				VAR NumberFormat = 
+				    SWITCH(
+				        TRUE(),
+				        CurrentValue >= 1e9, 
+				        ",,,.#" & "B",
+				        CurrentValue >= 1e6, 
+				        ",,." & "M",
+				        CurrentValue>= 1e3, 
+				        ",." & "K"
+				    )
+				RETURN
+				    BaseFormat & NumberFormat
+				```
 
 		changedProperty = Name
 
 		changedProperty = FormatString
 
+		changedProperty = FormatStringDefinition
+
 	measure 'Data as of' =
 			
 			MAX ( IMDB[last_refresh_date] )
-		dataType: dateTime
 		formatString: dd-MMM-yyyy
 		lineageTag: 4bec6678-879f-4da2-9798-6224c7b59f53
 
@@ -45,7 +65,6 @@ table IMDB
 	measure 'Number of Votes' =
 			
 			SUM ( IMDB[num_votes] )
-		dataType: int64
 		formatString: #,0
 		lineageTag: 129dad9e-7a53-4212-8718-9ddba097c619
 
@@ -56,7 +75,6 @@ table IMDB
 	measure 'Title #' =
 			
 			COUNTROWS ( IMDB )
-		dataType: int64
 		formatString: #,0
 		lineageTag: 0d9b0666-2c49-4104-9ed8-76a22c5313df
 
@@ -68,7 +86,6 @@ table IMDB
 			
 			"https://www.imdb.com/title/"
 			    & SELECTEDVALUE ( IMDB[IMDB ID] ) & "/"
-		dataType: string
 		lineageTag: c6f95d04-5f37-4f17-aad4-b33fc02396b9
 
 	measure 'Font Color' =
@@ -77,13 +94,11 @@ table IMDB
 			    CALCULATE (
 			        NOT ISEMPTY ( IMDB ),
 			        KEEPFILTERS (
-			            IMDB[Is in Top 1000 Movies] = "Y"
-			                || NOT ISBLANK ( IMDB[Top 250 Rank] )
+			            'IMDB'[Is Top Title] = "Y"
 			        )
 			    ),
 			    "Green"
 			)
-		dataType: string
 		lineageTag: 77e5a161-fd20-4a7a-99c9-84fd4cf561cd
 
 	column 'Popularity Rank'
@@ -107,8 +122,6 @@ table IMDB
 		summarizeBy: none
 		sourceColumn: tconst
 
-		annotation SummarizationSetBy = Automatic
-
 	column 'Title Type'
 		dataType: string
 		sourceProviderType: varchar(8000)
@@ -119,8 +132,6 @@ table IMDB
 
 		changedProperty = Name
 
-		annotation SummarizationSetBy = Automatic
-
 	column 'Primary Title'
 		dataType: string
 		sourceProviderType: varchar(8000)
@@ -129,8 +140,6 @@ table IMDB
 		summarizeBy: none
 		sourceColumn: primary_title
 
-		annotation SummarizationSetBy = Automatic
-
 	column 'Original Title'
 		dataType: string
 		sourceProviderType: varchar(8000)
@@ -138,8 +147,6 @@ table IMDB
 		sourceLineageTag: original_title
 		summarizeBy: none
 		sourceColumn: original_title
-
-		annotation SummarizationSetBy = Automatic
 
 	column 'Release Year'
 		dataType: int64
@@ -150,8 +157,6 @@ table IMDB
 		summarizeBy: none
 		sourceColumn: release_year
 
-		annotation SummarizationSetBy = Automatic
-
 	column 'Is Adult'
 		dataType: string
 		sourceProviderType: varchar(8000)
@@ -161,8 +166,6 @@ table IMDB
 		sourceColumn: is_adult
 
 		changedProperty = Name
-
-		annotation SummarizationSetBy = Automatic
 
 	column runtime_min
 		dataType: int64
@@ -176,8 +179,6 @@ table IMDB
 
 		changedProperty = IsHidden
 
-		annotation SummarizationSetBy = Automatic
-
 	column Generes
 		dataType: string
 		sourceProviderType: varchar(8000)
@@ -187,8 +188,6 @@ table IMDB
 		sourceColumn: genres
 
 		changedProperty = Name
-
-		annotation SummarizationSetBy = Automatic
 
 	column avg_rating
 		dataType: double
@@ -200,10 +199,6 @@ table IMDB
 		sourceColumn: avg_rating
 
 		changedProperty = IsHidden
-
-		annotation SummarizationSetBy = Automatic
-
-		annotation PBI_FormatHint = {"isGeneralNumber":true}
 
 	column num_votes
 		dataType: int64
@@ -217,8 +212,6 @@ table IMDB
 
 		changedProperty = IsHidden
 
-		annotation SummarizationSetBy = Automatic
-
 	column box_office
 		dataType: int64
 		isHidden
@@ -231,32 +224,26 @@ table IMDB
 
 		changedProperty = IsHidden
 
-		annotation SummarizationSetBy = Automatic
-
-	column 'Top 250 Rank'
+	column 'Top 250 Movie Rank'
 		dataType: int64
 		formatString: 0
 		sourceProviderType: bigint
 		lineageTag: 7a1548fc-7268-469d-a776-afd6f71fa4e0
 		sourceLineageTag: top_250_rnk
 		summarizeBy: none
-		sourceColumn: top_250_rnk
+		sourceColumn: top_250_movie_rnk
 
 		changedProperty = Name
 
-		annotation SummarizationSetBy = Automatic
-
-	column 'Is in Top 1000 Movies'
+	column 'Is Top 1000 Movie'
 		dataType: string
 		sourceProviderType: varchar(8000)
 		lineageTag: 45558799-e1a5-4bfd-9b7c-d79b2faf8d38
 		sourceLineageTag: is_top_1000_movies
 		summarizeBy: none
-		sourceColumn: is_top_1000_movies
+		sourceColumn: is_top_1000_movie
 
 		changedProperty = Name
-
-		annotation SummarizationSetBy = Automatic
 
 	column Languages
 		dataType: string
@@ -268,8 +255,6 @@ table IMDB
 
 		changedProperty = Name
 
-		annotation SummarizationSetBy = Automatic
-
 	column Directors
 		dataType: string
 		sourceProviderType: varchar(8000)
@@ -279,8 +264,6 @@ table IMDB
 		sourceColumn: director_lst
 
 		changedProperty = Name
-
-		annotation SummarizationSetBy = Automatic
 
 	column Actors
 		dataType: string
@@ -292,8 +275,6 @@ table IMDB
 
 		changedProperty = Name
 
-		annotation SummarizationSetBy = Automatic
-
 	column Actresses
 		dataType: string
 		sourceProviderType: varchar(8000)
@@ -303,8 +284,6 @@ table IMDB
 		sourceColumn: actress_lst
 
 		changedProperty = Name
-
-		annotation SummarizationSetBy = Automatic
 
 	column last_refresh_date
 		dataType: dateTime
@@ -317,6 +296,71 @@ table IMDB
 		sourceColumn: last_refresh_date
 
 		changedProperty = IsHidden
+
+	column 'Is Top Title'
+		dataType: string
+		sourceProviderType: varchar(8000)
+		lineageTag: 942cdbb0-76e5-4c1f-952a-03bbf6ccedb5
+		sourceLineageTag: is_top_1000_movies
+		summarizeBy: none
+		sourceColumn: is_top_title
+
+		changedProperty = Name
+
+	column 'Top 250 TV Rank'
+		dataType: int64
+		formatString: 0
+		sourceProviderType: bigint
+		lineageTag: b3ca707f-b61d-46fb-95a2-3ebbc1f84a02
+		sourceLineageTag: top_250_rnk
+		summarizeBy: none
+		sourceColumn: top_250_tv_rnk
+
+		changedProperty = Name
+
+	column 'Top Indian Movie Rank'
+		dataType: int64
+		formatString: 0
+		sourceProviderType: bigint
+		lineageTag: 9c794bb5-39cc-4822-b465-3b3519347efa
+		sourceLineageTag: top_250_rnk
+		summarizeBy: none
+		sourceColumn: top_indian_movie_rnk
+
+		changedProperty = Name
+
+	column 'Top Malayalam Movie Rank'
+		dataType: int64
+		formatString: 0
+		sourceProviderType: bigint
+		lineageTag: 3b08672e-a691-44ad-9e51-27de68918a9f
+		sourceLineageTag: top_250_rnk
+		summarizeBy: none
+		sourceColumn: top_malayalam_movie_rnk
+
+		changedProperty = Name
+
+	column 'Top Tamil Movie Rank'
+		dataType: int64
+		formatString: 0
+		sourceProviderType: bigint
+		lineageTag: 070eff5e-e2d7-4857-b9d2-c4d090692f8c
+		sourceLineageTag: top_250_rnk
+		summarizeBy: none
+		sourceColumn: top_tamil_movie_rnk
+
+		changedProperty = Name
+
+	column 'Top Telugu Movie Rank'
+		dataType: int64
+		formatString: 0
+		sourceProviderType: bigint
+		lineageTag: 1a406ca7-9e94-40c6-bfc1-e7091602bf21
+		sourceLineageTag: top_250_rnk
+		summarizeBy: none
+		sourceColumn: top_telugu_movie_rnk
+
+		changedProperty = Name
 
 		annotation SummarizationSetBy = Automatic
 
