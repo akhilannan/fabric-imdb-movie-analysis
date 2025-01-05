@@ -95,7 +95,8 @@ workspace_id = fabric.get_notebook_workspace_id()
 lakehouse_id = fabric.get_lakehouse_id()
 abfss_path = f"abfss://{workspace_id}@onelake.dfs.fabric.microsoft.com/{lakehouse_id}"
 files_path = "/lakehouse/default/Files"
-bronze_path = f"{files_path}/bronze/"
+raw_path = f"{files_path}/raw/"
+bronze_schema = "bronze"
 silver_schema = "silver"
 gold_schema = "gold"
 file_list = [
@@ -106,7 +107,7 @@ file_list = [
     "title.ratings.tsv.gz",
 ]
 parallelism = os.cpu_count() * 2
-os.makedirs(bronze_path, exist_ok=True)
+os.makedirs(raw_path, exist_ok=True)
 
 # METADATA ********************
 
@@ -410,10 +411,17 @@ def scrape_and_convert_data(urls, data_extractor, engine="pyarrow", spark=None):
 
 # CELL ********************
 
-def create_or_replace_delta_table(df, path: str, engine: str = "pyarrow") -> None:
+def create_or_replace_delta_table(df, path: str, engine: str = "pyarrow", duckdb_con=None) -> None:
     """
     Creates or replaces a Delta Lake table.
     Supports "pyarrow", "polars", and "spark" engines.
+    Optionally creates a DuckDB schema and view for the delta table.
+
+    Args:
+        df: Input dataframe (pandas, polars, or spark)
+        path: Path to save the delta table
+        engine: Engine to use for writing ("pyarrow", "polars", or "spark")
+        duckdb_con: Optional DuckDB connection (DuckDBLakehouseConnector instance) to create schema/view
     """
     delta_write_options = {
         "schema_mode": "overwrite",
@@ -440,6 +448,10 @@ def create_or_replace_delta_table(df, path: str, engine: str = "pyarrow") -> Non
         df.write.format("delta").options(**spark_delta_options).mode(mode).save(path)
     else:
         raise ValueError(f"Invalid engine: {engine}. Choose 'pyarrow', 'polars', or 'spark'.")
+
+    if duckdb_con is not None:
+        parts = path.split("/")
+        duckdb_con.create_view(schema=parts[-2], table=parts[-1])
 
 # METADATA ********************
 
@@ -475,17 +487,188 @@ def parallel_load_tables(file_list, parallelism, load_table_func):
 
 # MARKDOWN ********************
 
-# # Set DuckDB Secret
+# # Initialize DuckDB Connection
 
 # CELL ********************
 
-duckdb.sql(f"""
-    CREATE OR REPLACE SECRET onelake (
-        TYPE AZURE,
-        PROVIDER ACCESS_TOKEN,
-        ACCESS_TOKEN '{notebookutils.credentials.getToken('storage')}'
-    )
-""")
+import base64
+import time
+
+class DuckDBLakehouseConnector:
+    """
+    A wrapper class for DuckDB connection that handles Fabric Lakehouse connectivity
+    with automatic token refresh capability.
+    """
+    
+    def __init__(
+        self, 
+        lakehouse_name=None, 
+        workspace_name=None, 
+        setup_views=True,
+        database="temp"
+    ):
+        """
+        Initialize the Lakehouse connector.
+        
+        Parameters:
+        -----------
+        lakehouse_name : str, optional
+            Name of the lakehouse. If None, uses the current lakehouse.
+        workspace_name : str, optional
+            Name of the workspace. If None, uses the current workspace.
+        setup_views : bool, optional
+            Whether to set up lakehouse views during initialization (default: True).
+            Set to False if you only need to query existing views or tables.
+        database : str, optional
+            Database configuration:
+            - "memory": Creates an in-memory database that doesn't persist
+            - "temp": Creates a temporary persistent database with random name (default)
+            - "<path>": Creates/opens a persistent database at the specified path
+        """
+        self._workspace_id = fabric.resolve_workspace_id(workspace_name)
+        self._lakehouse_id = (fabric.resolve_item_id(lakehouse_name, item_type="Lakehouse", workspace=workspace_name) 
+                            if lakehouse_name else fabric.get_lakehouse_id())
+        self._abfss_path = f"abfss://{self._workspace_id}@onelake.dfs.fabric.microsoft.com/{self._lakehouse_id}/Tables"
+        
+        if database == "memory":
+            self._con = duckdb.connect(':memory:')
+        elif database == "temp":
+            self._con = duckdb.connect(f'temp_{time.time_ns()}.duckdb')
+        else:
+            self._con = duckdb.connect(database)
+            
+        self._current_token = None
+        self._initialize(setup_views)
+
+    def _is_token_valid(self, token):
+        """Check if the token is still valid by examining its expiration time."""
+        try:
+            # Token is in JWT format - split and decode the payload (second part)
+            payload = token.split('.')[1]
+            # Add padding if needed
+            payload += '=' * (-len(payload) % 4)
+            decoded = json.loads(base64.b64decode(payload))
+            # Check if token has expired
+            expiration_time = decoded.get('exp', 0)
+            current_time = time.time()
+            return current_time < expiration_time
+        except Exception:
+            return False
+
+    def _get_fresh_token(self):
+        """Get a fresh token from notebookutils."""
+        return notebookutils.credentials.getToken('storage')
+
+    def _update_onelake_secret(self, token):
+        """Update the onelake secret with a fresh token."""
+        self._con.sql(f"""
+        CREATE OR REPLACE SECRET onelake (
+            TYPE AZURE,
+            PROVIDER ACCESS_TOKEN,
+            ACCESS_TOKEN '{token}'
+        );
+        """)
+
+    def _setup_lakehouse_views(self, schema=None, table=None):
+        """Setup lakehouse views.
+        
+        Parameters:
+        -----------
+        schema : str, optional
+            Specific schema to create views for
+        table : str, optional
+            Specific table to create view for (requires schema to be specified)
+        """
+        base_query = f"""
+        WITH table_paths AS (
+            SELECT DISTINCT 
+                regexp_extract(file, '^(.*?)/[^/]+\\.parquet$', 1) as path,
+                split_part(path, '/', -2) as sch,
+                split_part(path, '/', -1) as tbl
+            FROM glob ('{self._abfss_path}/*/*/*')
+            WHERE 1=1
+            {f"AND sch = '{schema}'" if schema else ''}
+            {f"AND tbl = '{table}'" if table else ''}
+        )
+        SELECT 
+            string_agg('(''' || sch || ''', ''' || tbl || ''')', ',') as view_tuples,
+            string_agg(
+                'CREATE SCHEMA IF NOT EXISTS ' || sch || '; ' ||
+                'CREATE OR REPLACE VIEW ' || sch || '.' || tbl || 
+                ' AS SELECT * FROM delta_scan(''' || '{self._abfss_path}/' || sch || '/' || tbl || ''')'
+            , '; ') as setup_commands
+        FROM table_paths;
+        """
+        
+        result = self._con.sql(base_query).fetchone()
+        setup_commands = result[1]
+        view_tuples = result[0]
+        
+        if setup_commands:
+            self._con.sql(setup_commands)
+            if view_tuples:
+                show_query = f"SELECT * FROM (SHOW ALL TABLES) WHERE (schema, name) IN ({view_tuples})"
+                self._con.sql(show_query).show(max_width=150)
+            self._con.sql('CHECKPOINT')
+
+    def create_view(self, schema, table=None):
+        """
+        Create view(s) for specific schema/table combination.
+        
+        Parameters:
+        -----------
+        schema : str
+            Schema name to create views for
+        table : str, optional
+            Specific table name to create view for. If None, creates views for all tables in schema
+        """
+        self._check_and_refresh_token()
+        self._setup_lakehouse_views(schema=schema, table=table)
+
+    def _initialize(self, setup_views=True):
+        """
+        Initial setup of token and optionally views.
+        
+        Parameters:
+        -----------
+        setup_views : bool
+            Whether to set up lakehouse views
+        """
+        self._current_token = self._get_fresh_token()
+        self._update_onelake_secret(self._current_token)
+        self._con.sql("SET enable_object_cache=true;")
+        
+        if setup_views:
+            self._setup_lakehouse_views()
+            
+    def _check_and_refresh_token(self):
+        """Check token validity and refresh if needed."""
+        if not self._is_token_valid(self._current_token):
+            self._current_token = self._get_fresh_token()
+            self._update_onelake_secret(self._current_token)
+    
+    def sql(self, query):
+        """
+        Execute SQL with automatic token refresh.
+        
+        Parameters:
+        -----------
+        query : str
+            SQL query to execute
+            
+        Returns:
+        --------
+        DuckDBPyRelation
+            Query result
+        """
+        self._check_and_refresh_token()
+        return self._con.sql(query)
+    
+    def __getattr__(self, name):
+        """Delegate all other attributes to the underlying connection."""
+        return getattr(self._con, name)
+
+con = DuckDBLakehouseConnector(setup_views=False)
 
 # METADATA ********************
 
@@ -501,10 +684,10 @@ duckdb.sql(f"""
 # CELL ********************
 
 def load_table(file):
-    con = duckdb.connect()
+    tmp_con = DuckDBLakehouseConnector(setup_views=False, database="memory")
 
-    bronze_file_path = bronze_path + file
-    urlretrieve(DATASET_URL + file, bronze_file_path)
+    raw_file_path = raw_path + file
+    urlretrieve(DATASET_URL + file, raw_file_path)
     table_name = "t_" + file.replace('.tsv.gz', '').replace(".", "_")
 
     schema = {
@@ -519,7 +702,7 @@ def load_table(file):
         "isAdult": "TINYINT",
     }
 
-    detected_columns = con.sql(f"SELECT Columns FROM sniff_csv('{bronze_file_path}', sample_size = 1)").fetchone()[0]
+    detected_columns = con.sql(f"SELECT Columns FROM sniff_csv('{raw_file_path}', sample_size = 1)").fetchone()[0]
     cast_statements = [
         f"CAST({col_info['name']} AS {schema[col_info['name']]}) AS {col_info['name']}"
         if col_info['name'] in schema
@@ -528,21 +711,120 @@ def load_table(file):
     ]
 
     create_or_replace_delta_table(
-        con.sql(f"""
+        tmp_con.sql(f"""
             SELECT {','.join(cast_statements)}
-            FROM read_csv('{bronze_file_path}',
+            FROM read_csv('{raw_file_path}',
                              header=true,
                              delim='\\t',
                              quote='',
                              nullstr='\\N',
                              ignore_errors=false)
         """).record_batch(),
-        delta_table_path(silver_schema, table_name)
+        delta_table_path(bronze_schema, table_name),
+        "pyarrow",
+        con
     )
 
-    con.close()
+    tmp_con.close()
 
 parallel_load_tables(file_list, parallelism, load_table)
+
+# METADATA ********************
+
+# META {
+# META   "language": "python",
+# META   "language_group": "jupyter_python"
+# META }
+
+# MARKDOWN ********************
+
+# # Create IMDB Title table
+
+# CELL ********************
+
+create_or_replace_delta_table(
+    con.sql(f"""
+        SELECT
+            tbs.tconst,
+            tbs.titletype AS title_type,
+            tbs.primarytitle AS primary_title,
+            tbs.originaltitle AS original_title,
+            tbs.startyear AS release_year,
+            CASE 
+                WHEN tbs.isadult = 1 THEN 'Y' 
+                ELSE 'N' 
+            END AS is_adult,
+            tbs.runtimeminutes AS runtime_min,
+            tbs.genres AS genres,
+            trt.averagerating AS avg_rating,
+            trt.numvotes AS num_votes
+        FROM 
+            {bronze_schema}.t_title_basics AS tbs
+        LEFT OUTER JOIN 
+            {bronze_schema}.t_title_ratings AS trt
+            ON trt.tconst = tbs.tconst
+    """).record_batch(), 
+    delta_table_path(silver_schema, "t_title"),
+    "pyarrow",
+    con
+)
+
+# METADATA ********************
+
+# META {
+# META   "language": "python",
+# META   "language_group": "jupyter_python"
+# META }
+
+# MARKDOWN ********************
+
+# # Create IMDB CREW table
+
+# CELL ********************
+
+create_or_replace_delta_table(
+    con.sql(f"""
+        WITH unpivot_crew AS (
+            UNPIVOT {bronze_schema}.t_title_crew
+            ON COLUMNS(* EXCLUDE (tconst))
+            INTO
+                NAME category
+                VALUE nconst
+        ),
+        comb_crew AS (
+            SELECT
+                tconst,
+                category,
+                nconst
+            FROM
+                {bronze_schema}.t_title_principals
+            WHERE
+                category NOT IN ('director', 'writer')
+            
+            UNION ALL
+            
+            SELECT
+                tconst,
+                regexp_replace(category, 's$', ''),
+                UNNEST(string_to_array(nconst, ','))
+            FROM
+                unpivot_crew
+        )
+        SELECT DISTINCT
+            crw.tconst,
+            crw.category,
+            tnb.primaryname AS name
+        FROM
+            comb_crew crw
+        INNER JOIN
+            {bronze_schema}.t_name_basics AS tnb
+        ON
+            tnb.nconst = crw.nconst;
+    """).record_batch(), 
+    delta_table_path(silver_schema, "t_crew"),
+    "pyarrow",
+    con
+)
 
 # METADATA ********************
 
@@ -564,54 +846,75 @@ imdb_df = scrape_and_convert_data(url_list, scrape_movie_data_threaded)
 lang_df = scrape_and_convert_data(LANGUAGE_URL, extract_lang_data)
 
 create_or_replace_delta_table(
-    duckdb.sql(f"""
-        SELECT
-            imd.tconst,
-            lng.lang_name,
-            (imd.rnk + 
+    con.sql(f"""
+        WITH base AS (
+            SELECT
+                imd.tconst,
+                lng.lang_name,
+                (imd.rnk + 
+                    CASE 
+                        WHEN imd.type LIKE '{POPULAR_MOVIE_PATTERN}' 
+                        THEN CAST(regexp_extract(imd.type, 'moviemeter=(\\d+),', 1) AS INTEGER) - 1 
+                        ELSE 0 
+                    END
+                ) AS rnk,
+                imd.type AS url_type,
                 CASE 
-                    WHEN imd.type LIKE '{POPULAR_MOVIE_PATTERN}' 
-                    THEN CAST(regexp_extract(imd.type, 'moviemeter=(\\d+),', 1) AS INTEGER) - 1 
-                    ELSE 0 
-                END
-            ) AS rnk,
-            imd.type AS url_type,
-            CASE 
-                WHEN imd.type IN (
-                    'toptv', 'top', 'top-rated-indian-movies',
-                    'top-rated-malayalam-movies', 'top-rated-tamil-movies', 'top-rated-telugu-movies'
-                ) THEN 'Y' 
-                ELSE 'N' 
-            END AS is_in_top_250,
-            CASE 
-                WHEN imd.type LIKE '%top_1000%' THEN 'Y' 
-                ELSE 'N' 
-            END AS is_in_top_1000,
-            CASE 
-                WHEN imd.type LIKE '{POPULAR_MOVIE_PATTERN}' THEN 'Y' 
-                ELSE 'N' 
-            END AS is_popular,
-            CASE 
-                WHEN imd.type LIKE '{PRIMARY_LANGUAGE_PATTERN}' THEN 'Y' 
-                ELSE 'N' 
-            END AS is_primary_lang,
-            CASE 
-                WHEN imd.type LIKE '%,asc%' THEN 'Y' 
-                ELSE 'N' 
-            END AS is_asc,
-            CASE 
-                WHEN imd.type LIKE '%,desc%' THEN 'Y' 
-                ELSE 'N' 
-            END AS is_desc
-        FROM imdb_df imd
-        LEFT JOIN lang_df lng
-            ON CASE
-                WHEN imd.type LIKE '{PRIMARY_LANGUAGE_PATTERN}'
-                THEN regexp_extract(imd.type, 'primary_language=([a-z]+)', 1)
-                ELSE NULL
-            END = lng.lang_code
+                    WHEN imd.type IN (
+                        'toptv', 'top', 'top-rated-indian-movies',
+                        'top-rated-malayalam-movies', 'top-rated-tamil-movies', 'top-rated-telugu-movies'
+                    ) OR imd.type LIKE '%top_1000%' THEN 'Y' 
+                    ELSE 'N' 
+                END AS is_top_title,
+                CASE 
+                    WHEN imd.type LIKE '%top_1000%' THEN 'Y' 
+                    ELSE 'N' 
+                END AS is_in_top_1000,
+                CASE 
+                    WHEN imd.type LIKE '{POPULAR_MOVIE_PATTERN}' THEN 'Y' 
+                    ELSE 'N' 
+                END AS is_popular,
+                CASE 
+                    WHEN imd.type LIKE '{PRIMARY_LANGUAGE_PATTERN}' THEN 'Y' 
+                    ELSE 'N' 
+                END AS is_primary_lang,
+                CASE 
+                    WHEN imd.type LIKE '%,asc%' THEN 'Y' 
+                    ELSE 'N' 
+                END AS is_asc,
+                CASE 
+                    WHEN imd.type LIKE '%,desc%' THEN 'Y' 
+                    ELSE 'N' 
+                END AS is_desc
+            FROM imdb_df imd
+            LEFT JOIN lang_df lng
+                ON CASE
+                    WHEN imd.type LIKE '{PRIMARY_LANGUAGE_PATTERN}'
+                    THEN regexp_extract(imd.type, 'primary_language=([a-z]+)', 1)
+                    ELSE NULL
+                END = lng.lang_code
+        )
+        SELECT
+            tconst,
+            STRING_AGG(lang_name, '; ') AS language_lst,
+            MAX(CASE WHEN is_top_title = 'Y' THEN rnk END) AS top_title_rnk,
+            MAX(CASE WHEN is_popular = 'Y' THEN rnk END) AS popularity_rnk,
+            MAX(CASE WHEN is_primary_lang = 'Y' AND is_asc = 'Y' THEN rnk END) AS language_popularity_rnk,
+            MAX(CASE WHEN is_primary_lang = 'Y' AND is_desc = 'Y' THEN rnk END) AS language_votes_rnk,
+            MAX(CASE WHEN url_type = 'top' THEN rnk END) AS top_250_movie_rnk,
+            MAX(CASE WHEN url_type = 'toptv' THEN rnk END) AS top_250_tv_rnk,
+            MAX(CASE WHEN url_type = 'top-rated-indian-movies' THEN rnk END) AS top_indian_movie_rnk,
+            MAX(CASE WHEN url_type = 'top-rated-malayalam-movies' THEN rnk END) AS top_malayalam_movie_rnk,
+            MAX(CASE WHEN url_type = 'top-rated-tamil-movies' THEN rnk END) AS top_tamil_movie_rnk,
+            MAX(CASE WHEN url_type = 'top-rated-telugu-movies' THEN rnk END) AS top_telugu_movie_rnk,
+            COALESCE(MAX(is_in_top_1000), 'N') AS is_top_1000_movie,
+            COALESCE(MAX(is_top_title), 'N') AS is_top_title
+        FROM base
+        GROUP BY ALL
     """).record_batch(), 
-    delta_table_path(silver_schema, "t_imdb_top")
+    delta_table_path(silver_schema, "t_top_title"),
+    "pyarrow",
+    con
 )
 
 # METADATA ********************
@@ -630,7 +933,7 @@ create_or_replace_delta_table(
 bo_df = scrape_and_convert_data(yearly_box_office_url_list, scrape_movie_data_threaded)
 
 create_or_replace_delta_table(
-    duckdb.sql(f"""
+    con.sql(f"""
         SELECT
             tconst,
             box_office AS box_office_usd
@@ -640,18 +943,15 @@ create_or_replace_delta_table(
             tconst <> 'NA'
         UNION ALL
         SELECT
-            tbs.tconst,
+            ttl.tconst,
             tbo.box_office
         FROM
             bo_df AS tbo
         INNER JOIN
-            delta_scan('{delta_table_path(silver_schema, "t_title_basics")}') AS tbs
-            ON tbs.primaryTitle = tbo.movie_name
-            AND tbs.startYear = tbo.movie_year
-            AND tbs.titleType = 'movie'
-        INNER JOIN
-            delta_scan('{delta_table_path(silver_schema, "t_title_ratings")}') AS trt
-            ON trt.tconst = tbs.tconst
+            {silver_schema}.t_title AS ttl
+            ON ttl.primary_title = tbo.movie_name
+            AND ttl.release_year = tbo.movie_year
+            AND ttl.title_type = 'movie'
         WHERE
             tbo.tconst = 'NA'
             AND NOT EXISTS (
@@ -660,7 +960,7 @@ create_or_replace_delta_table(
                 FROM
                     bo_df bo
                 WHERE
-                    bo.tconst = tbs.tconst
+                    bo.tconst = ttl.tconst
             )
             AND NOT EXISTS (
                 SELECT
@@ -678,12 +978,14 @@ create_or_replace_delta_table(
                     tbo.movie_name,
                     tbo.movie_year
                 ORDER BY
-                    trt.numvotes DESC,
+                    ttl.num_votes DESC,
                     tbo.box_office DESC
             ) = 1
     """
     ).record_batch(),
-    delta_table_path(silver_schema, "t_bo"),
+    delta_table_path(silver_schema, "t_boxoffice"),
+    "pyarrow",
+    con
 )
 
 # METADATA ********************
@@ -700,71 +1002,70 @@ create_or_replace_delta_table(
 # CELL ********************
 
 create_or_replace_delta_table(
-    duckdb.sql(f"""
-        WITH crew_info AS (
-            SELECT
-                tconst,
-                category,
-                nconst
-            FROM delta_scan('{delta_table_path(silver_schema, "t_title_principals")}')
-            WHERE category IN ('actor', 'actress')
-            UNION ALL
-            SELECT
-                tconst,
-                'director' AS category,
-                UNNEST(string_to_array(directors, ',')) AS nconst
-            FROM delta_scan('{delta_table_path(silver_schema, "t_title_crew")}')
-            WHERE directors IS NOT NULL
-        )
-        SELECT
-            tbs.tconst,
-            MAX(tbs.titletype) AS title_type,
-            MAX(tbs.primarytitle) AS primary_title,
-            MAX(tbs.originaltitle) AS original_title,
-            MAX(tbs.startyear) AS release_year,
-            MAX(CASE WHEN tbs.isadult = 1 THEN 'Y' ELSE 'N' END) AS is_adult,
-            MAX(tbs.runtimeminutes) AS runtime_min,
-            MAX(tbs.genres) AS genres,
-            MAX(trt.averagerating) AS avg_rating,
-            MAX(trt.numvotes) AS num_votes,
-            MAX(tbo.box_office_usd) AS box_office,
-            MAX(CASE WHEN imd.is_in_top_250 = 'Y' THEN imd.rnk END) AS top_250_rnk,
-            MAX(CASE WHEN imd.is_in_top_1000 = 'Y' THEN imd.rnk END) AS top_1000_rnk,
-            MAX(CASE WHEN imd.is_popular = 'Y' THEN imd.rnk END) AS popularity_rnk,
-            MAX(CASE WHEN imd.is_primary_lang = 'Y' AND imd.is_asc = 'Y' THEN imd.rnk END) AS language_popularity_rnk,
-            MAX(CASE WHEN imd.is_primary_lang = 'Y' AND imd.is_desc = 'Y' THEN imd.rnk END) AS language_votes_rnk,
-            COALESCE(MAX(imd.is_in_top_1000), 'N') AS is_top_1000_movies,
-            ARRAY_TO_STRING(LIST(DISTINCT imd.lang_name), '; ') AS language_lst,
-            ARRAY_TO_STRING(LIST(DISTINCT CASE WHEN ci.category = 'director' THEN tnb.primaryname END), '; ') AS director_lst,
-            ARRAY_TO_STRING(LIST(DISTINCT CASE WHEN ci.category = 'actor' THEN tnb.primaryname END), '; ') AS actor_lst,
-            ARRAY_TO_STRING(LIST(DISTINCT CASE WHEN ci.category = 'actress' THEN tnb.primaryname END), '; ') AS actress_lst,
-            CAST(CURRENT_DATE AS STRING) AS last_refresh_date,
+    con.sql(f"""
+        SELECT 
+            * EXCLUDE (top_title_rnk, popularity_rnk, language_popularity_rnk, language_votes_rnk), 
             ROW_NUMBER() OVER (
                 ORDER BY
                     popularity_rnk ASC NULLS LAST,
                     language_popularity_rnk ASC NULLS LAST,
-                    top_250_rnk ASC NULLS LAST,
-                    top_1000_rnk ASC NULLS LAST,
+                    top_title_rnk ASC NULLS LAST,
                     language_votes_rnk ASC NULLS LAST,
                     box_office DESC NULLS LAST,
                     num_votes DESC NULLS LAST,
                     avg_rating DESC NULLS LAST
             ) AS overall_popularity_rnk
-        FROM delta_scan('{delta_table_path(silver_schema, "t_title_basics")}') AS tbs
-        LEFT OUTER JOIN delta_scan('{delta_table_path(silver_schema, "t_title_ratings")}') AS trt
-            ON trt.tconst = tbs.tconst
-        LEFT OUTER JOIN crew_info AS ci
-            ON ci.tconst = tbs.tconst
-        LEFT OUTER JOIN delta_scan('{delta_table_path(silver_schema, "t_name_basics")}') AS tnb
-            ON tnb.nconst = ci.nconst
-        LEFT OUTER JOIN delta_scan('{delta_table_path(silver_schema, "t_imdb_top")}') AS imd
-            ON imd.tconst = tbs.tconst
-        LEFT OUTER JOIN delta_scan('{delta_table_path(silver_schema, "t_bo")}') AS tbo
-            ON tbo.tconst = tbs.tconst
-        WHERE tbs.titletype IN ('movie', 'tvMiniSeries', 'short', 'tvSeries', 'tvShort', 'tvSpecial')
-        GROUP BY ALL
+        FROM (
+            SELECT
+                ttl.tconst,
+                MAX(ttl.title_type) AS title_type,
+                MAX(ttl.primary_title) AS primary_title,
+                MAX(ttl.original_title) AS original_title,
+                MAX(ttl.release_year) AS release_year,
+                MAX(ttl.is_adult) AS is_adult,
+                MAX(ttl.runtime_min) AS runtime_min,
+                MAX(ttl.genres) AS genres,
+                MAX(ttl.avg_rating) AS avg_rating,
+                MAX(ttl.num_votes) AS num_votes,
+                MAX(tbo.box_office_usd) AS box_office,
+                MAX(top.top_title_rnk) AS top_title_rnk,
+                MAX(top.popularity_rnk) AS popularity_rnk,
+                MAX(top.language_popularity_rnk) AS language_popularity_rnk,
+                MAX(top.language_votes_rnk) AS language_votes_rnk,
+                COALESCE(MAX(top.top_250_movie_rnk), 999) AS top_250_movie_rnk,
+                COALESCE(MAX(top.top_250_tv_rnk), 999) AS top_250_tv_rnk,
+                COALESCE(MAX(top.top_indian_movie_rnk), 999) AS top_indian_movie_rnk,
+                COALESCE(MAX(top.top_malayalam_movie_rnk), 999) AS top_malayalam_movie_rnk,
+                COALESCE(MAX(top.top_tamil_movie_rnk), 999) AS top_tamil_movie_rnk,
+                COALESCE(MAX(top.top_telugu_movie_rnk), 999) AS top_telugu_movie_rnk,
+                COALESCE(MAX(top.is_top_1000_movie), 'N') AS is_top_1000_movie,
+                COALESCE(MAX(top.is_top_title), 'N') AS is_top_title,
+                MAX(top.language_lst) AS language_lst,
+                STRING_AGG(CASE WHEN tcr.category = 'director' THEN tcr.name END, '; ') AS director_lst,
+                STRING_AGG(CASE WHEN tcr.category = 'actor' THEN tcr.name END, '; ') AS actor_lst,
+                STRING_AGG(CASE WHEN tcr.category = 'actress' THEN tcr.name END, '; ') AS actress_lst,
+                CAST(CURRENT_DATE AS STRING) AS last_refresh_date
+            FROM 
+                {silver_schema}.t_title AS ttl
+            LEFT OUTER JOIN 
+                {silver_schema}.t_crew AS tcr
+                ON ttl.tconst = tcr.tconst
+                AND tcr.category IN ('actor', 'actress', 'director')
+            LEFT OUTER JOIN 
+                {silver_schema}.t_top_title AS top
+                ON top.tconst = ttl.tconst
+            LEFT OUTER JOIN 
+                {silver_schema}.t_boxoffice AS tbo
+                ON tbo.tconst = ttl.tconst
+            WHERE 
+                ttl.title_type IN ('movie', 'tvMiniSeries', 'short', 'tvSeries', 'tvShort', 'tvSpecial')
+            GROUP BY 
+                ALL
+        )
     """).record_batch(),
-    delta_table_path(gold_schema, "t_imdb")
+    delta_table_path(gold_schema, "t_imdb"),
+    "pyarrow",
+    con
 )
 
 # METADATA ********************
