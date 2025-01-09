@@ -3,6 +3,7 @@ model Model
 	collation: Latin1_General_100_BIN2_UTF8
 	defaultPowerBIDataSourceVersion: powerBI_V3
 	sourceQueryCulture: en-US
+	directLakeBehavior: directLakeOnly
 	dataAccessOptions
 		legacyRedirects
 		returnErrorValuesAsNull
@@ -20,6 +21,4 @@ annotation __TEdtr = 1
 annotation TabularEditor_SerializeOptions = {"IgnoreInferredObjects":true,"IgnoreInferredProperties":true,"IgnoreTimestamps":true,"SplitMultilineStrings":true,"PrefixFilenames":false,"LocalTranslations":false,"LocalPerspectives":false,"LocalRelationships":false,"Levels":["Data Sources","Perspectives","Relationships","Roles","Shared Expressions","Tables","Tables/Calculation Items","Tables/Columns","Tables/Hierarchies","Tables/Measures","Tables/Partitions","Translations"],"TmdlOptions":{"IncludeRefs":false,"ExpressionTrimStyle":"TrimTrailingWhitespaces"}}
 
 ref table IMDB
-
-ref cultureInfo en-US
 
