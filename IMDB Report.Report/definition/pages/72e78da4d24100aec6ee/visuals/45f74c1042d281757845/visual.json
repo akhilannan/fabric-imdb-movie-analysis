@@ -194,6 +194,20 @@
                       "Entity": "IMDB"
                     }
                   },
+                  "Property": "Top Title Rank"
+                }
+              },
+              "queryRef": "IMDB.Top Title Rank",
+              "nativeQueryRef": "Top Title Rank"
+            },
+            {
+              "field": {
+                "Column": {
+                  "Expression": {
+                    "SourceRef": {
+                      "Entity": "IMDB"
+                    }
+                  },
                   "Property": "Top 250 Movie Rank"
                 }
               },
@@ -1284,6 +1298,20 @@
           },
           "selector": {
             "metadata": "IMDB.Title #"
+          }
+        },
+        {
+          "properties": {
+            "value": {
+              "expr": {
+                "Literal": {
+                  "Value": "110D"
+                }
+              }
+            }
+          },
+          "selector": {
+            "metadata": "IMDB.Top Title Rank"
           }
         }
       ],
