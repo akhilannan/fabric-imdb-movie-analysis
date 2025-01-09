@@ -27,22 +27,21 @@ table IMDB
 			SUM ( IMDB[box_office] )
 		lineageTag: 73a56fdc-904a-4721-b676-c99e20fecd3e
 
-		formatStringDefinition = ```
+		formatStringDefinition =
 				VAR CurrentValue = SELECTEDMEASURE()
 				VAR BaseFormat = "$#,0"
-				VAR NumberFormat = 
+				VAR NumberFormat =
 				    SWITCH(
 				        TRUE(),
-				        CurrentValue >= 1e9, 
+				        CurrentValue >= 1e9,
 				        ",,,.#" & "B",
-				        CurrentValue >= 1e6, 
+				        CurrentValue >= 1e6,
 				        ",,." & "M",
-				        CurrentValue>= 1e3, 
+				        CurrentValue>= 1e3,
 				        ",." & "K"
 				    )
 				RETURN
 				    BaseFormat & NumberFormat
-				```
 
 		changedProperty = Name
 
@@ -362,7 +361,16 @@ table IMDB
 
 		changedProperty = Name
 
-		annotation SummarizationSetBy = Automatic
+	column 'Top Title Rank'
+		dataType: int64
+		formatString: 0
+		sourceProviderType: int
+		lineageTag: be063804-dbc9-4233-8482-fbd80593bc0d
+		sourceLineageTag: overall_popularity_rnk
+		summarizeBy: none
+		sourceColumn: top_title_rnk
+
+		changedProperty = Name
 
 	partition IMDB = entity
 		mode: directLake
