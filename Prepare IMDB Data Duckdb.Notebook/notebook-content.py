@@ -16,6 +16,20 @@
 # META   }
 # META }
 
+# CELL ********************
+
+# MAGIC %%configure
+# MAGIC {
+# MAGIC     "vCores": 4
+# MAGIC }
+
+# METADATA ********************
+
+# META {
+# META   "language": "python",
+# META   "language_group": "jupyter_python"
+# META }
+
 # MARKDOWN ********************
 
 # # Upgrade Libraries
@@ -38,7 +52,7 @@
 # CELL ********************
 
 import duckdb
-from deltalake.writer import write_deltalake
+from deltalake import writer
 import pyarrow as pa
 import requests
 from bs4 import BeautifulSoup
@@ -182,32 +196,6 @@ yearly_box_office_url_list = [BOXOFFICE_YEAR + str(n) for n in range(1977, date.
 
 # MARKDOWN ********************
 
-# # Function to get delta table path
-
-# CELL ********************
-
-def delta_table_path(schema_name, table_name):
-  """
-  Returns the ABFSS path for a Delta table.
-
-  Args:
-    schema_name: The schema (e.g., "silver", "gold") of the table.
-    table_name: The name of the table.
-
-  Returns:
-    The full ABFSS path of the Delta table.
-  """
-  return f"{abfss_path}/Tables/{schema_name}/{table_name}"
-
-# METADATA ********************
-
-# META {
-# META   "language": "python",
-# META   "language_group": "jupyter_python"
-# META }
-
-# MARKDOWN ********************
-
 # # Functions to scrap movie data
 
 # CELL ********************
@@ -220,41 +208,55 @@ def get_soup(url):
 
 def parse_box_office_data(url):
     """Parse movie data from box office pages."""
-    movie_data = []
-    is_yearly = BOXOFFICE_YEAR in url
-    
-    soup = get_soup(url)
-    movie_entries = soup.find_all("table")[0].find_all("tr")
-    for entry in movie_entries:
-        row_cols = entry.find_all("td")
-        if not row_cols:
-            continue
-            
-        movie_dict = {
-            "tconst": "NA",
-            "rnk": -1,
-            "type": "NA",
-            "movie_name": row_cols[1].text,
-            "movie_year": -1,
-            "box_office": int(row_cols[2].text.replace("$", "").replace(",", "")),
-            "url": url
-        }
-        
-        if is_yearly:
-            movie_dict.update({
-                "movie_year": int(url.split("/")[-1])
-            })
-        else:
-            movie_dict.update({
-                "type": url.split("/")[-2],
-                "rnk": int(row_cols[0].text.replace(",", "")),
-                "tconst": re.search(r"(tt\d+)", row_cols[1].find("a")["href"]).group(1),
-                "movie_year": int(row_cols[7].text)
-            })
-            
-        movie_data.append(movie_dict)
-    
-    return movie_data
+    max_retries = 3
+    retry_delay = 2  # seconds
+
+    for attempt in range(max_retries):
+        try:
+            movie_data = []
+            is_yearly = BOXOFFICE_YEAR in url
+
+            soup = get_soup(url)
+            movie_entries = soup.find_all("table")[0].find_all("tr")
+            for entry in movie_entries:
+                row_cols = entry.find_all("td")
+                if not row_cols:
+                    continue
+
+                movie_dict = {
+                    "tconst": "NA",
+                    "rnk": -1,
+                    "type": "NA",
+                    "movie_name": row_cols[1].text,
+                    "movie_year": -1,
+                    "box_office": int(row_cols[2].text.replace("$", "").replace(",", "")),
+                    "url": url
+                }
+
+                if is_yearly:
+                    movie_dict.update({
+                        "movie_year": int(url.split("/")[-1])
+                    })
+                else:
+                    movie_dict.update({
+                        "type": url.split("/")[-2],
+                        "rnk": int(row_cols[0].text.replace(",", "")),
+                        "tconst": re.search(r"(tt\d+)", row_cols[1].find("a")["href"]).group(1),
+                        "movie_year": int(row_cols[7].text)
+                    })
+
+                movie_data.append(movie_dict)
+
+            return movie_data
+
+        except (IndexError, ValueError) as e:
+            print(f"Attempt {attempt + 1} failed for {url}: {e}")
+            if attempt < max_retries - 1:
+                print(f"Retrying in {retry_delay} seconds...")
+                time.sleep(retry_delay)
+            else:
+                print(f"Max retries reached for {url}. Skipping.")
+                return []
 
 
 def parse_imdb_json_data(url):
@@ -372,86 +374,135 @@ def extract_lang_data(url):
 
 # MARKDOWN ********************
 
-# # Function to Scrape and Convert data
+# # Engine Utilities
 
 # CELL ********************
 
-def scrape_and_convert_data(urls, data_extractor, engine="pyarrow", spark=None):
+def detect_engine(engine):
     """
-    Scrapes data from a list of URLs, extracts it using a provided function,
-    and converts it to a PyArrow Table, Polars DataFrame, or Spark DataFrame.
+    Detects the type of engine based on its attributes.
+    
+    Args:
+        engine: The engine object to detect
+    Returns:
+        String indicating the detected engine type ('spark', 'polars', 'pyarrow', or 'deltalake')
     """
-    scraped_data = data_extractor(urls)
-
-    if engine == "spark":
-        if spark is None:
-            raise ValueError("SparkSession is required for 'spark' engine.")
-        return spark.createDataFrame(scraped_data)
-    elif engine == "pyarrow":
-        if not scraped_data:
-            return pa.Table.from_pydict({})
-        column_names = scraped_data[0].keys()
-        data_dict = {col: [entry.get(col) for entry in scraped_data] for col in column_names}
-        return pa.Table.from_pydict(data_dict)
-    elif engine == "polars":
-        return pl.DataFrame(scraped_data).lazy()
+    if hasattr(engine, "sparkContext"):
+        return "spark"
+    elif hasattr(engine, "scan_delta"):
+        return "polars"
+    elif hasattr(engine, "Table"):
+        return "pyarrow"
+    elif hasattr(engine, "write_deltalake"):
+        return "deltalake"
     else:
-        raise ValueError(f"Invalid engine: {engine}. Choose 'pyarrow', 'polars', or 'spark'.")
+        raise ValueError(
+            "Invalid engine. Provide a SparkSession, polars, pyarrow, or deltalake.writer module."
+        )
 
-# METADATA ********************
+def delta_table_path(schema_name, table_name):
+  """
+  Returns the ABFSS path for a Delta table.
 
-# META {
-# META   "language": "python",
-# META   "language_group": "jupyter_python"
-# META }
+  Args:
+    schema_name: The schema (e.g., "silver", "gold") of the table.
+    table_name: The name of the table.
 
-# MARKDOWN ********************
+  Returns:
+    The full ABFSS path of the Delta table.
+  """
+  return f"{abfss_path}/Tables/{schema_name}/{table_name}"
 
-# # Function to create or replace delta table
 
-# CELL ********************
-
-def create_or_replace_delta_table(df, path: str, engine: str = "pyarrow", duckdb_con=None) -> None:
+def create_or_replace_delta_table(df, schema, table, engine, duckdb_con=None):
     """
     Creates or replaces a Delta Lake table.
-    Supports "pyarrow", "polars", and "spark" engines.
-    Optionally creates a DuckDB schema and view for the delta table.
 
     Args:
         df: Input dataframe (pandas, polars, or spark)
-        path: Path to save the delta table
-        engine: Engine to use for writing ("pyarrow", "polars", or "spark")
+        schema: Schema (e.g., "silver", "gold") of the table.
+        table: Name of the table
+        engine: Engine to use for writing.
+                - If a SparkSession object is passed, it uses Spark to write.
+                - If the polars module is passed, it uses Polars to write.
+                - If deltalake.writer is passed, it uses deltalake to write
         duckdb_con: Optional DuckDB connection (DuckDBLakehouseConnector instance) to create schema/view
     """
+    path = delta_table_path(schema, table)
+    
     delta_write_options = {
         "schema_mode": "overwrite",
         "max_rows_per_group": 16_000_000,
         "min_rows_per_group": 8_000_000,
         "max_rows_per_file": 48_000_000,
     }
-
+    
+    engine_type = detect_engine(engine)
     mode = "overwrite"
-
-    if engine == "pyarrow":
-        write_deltalake(path, df, mode=mode, **delta_write_options, engine='pyarrow')
-    elif engine == "polars":
+    
+    if engine_type == "spark":
+        spark_options = {k: v for k, v in delta_write_options.items() if k == "schema_mode"}
+        df.write.format("delta").options(**spark_options).mode(mode).save(path)
+    elif engine_type == "polars":
         if isinstance(df, pl.LazyFrame):
             df = df.collect(streaming=True)
         df.write_delta(path, mode=mode, delta_write_options=delta_write_options)
-    elif engine == "spark":
-        spark_delta_options = {
-            k: v
-            for k, v in delta_write_options.items()
-            if k == "schema_mode"
-        }
-
-        df.write.format("delta").options(**spark_delta_options).mode(mode).save(path)
+    elif engine_type == "deltalake":
+        engine.write_deltalake(path, df, mode=mode, **delta_write_options, engine='pyarrow')
     else:
-        raise ValueError(f"Invalid engine: {engine}. Choose 'pyarrow', 'polars', or 'spark'.")
-
+        raise ValueError("Only Spark, Polars and DeltaLake engines are supported for writing delta tables")
+    
     if duckdb_con is not None:
-        parts = path.split("/")
-        duckdb_con.create_view(schema=parts[-2], table=parts[-1])
+        duckdb_con.create_view(schema=schema, table=table)
+
+def read_delta_table(schema, table, engine):
+    """
+    Reads a Delta table using either Spark or Polars based on the provided engine.
+
+    Args:
+        schema (str): The schema (e.g., database or folder) where the Delta table resides.
+        table (str): The name of the Delta table.
+        engine (Union[pyspark.sql.SparkSession, module]): Either a SparkSession object 
+                                                          or the polars module itself 
+                                                          to indicate the desired engine.
+
+    Returns:
+        pyspark.sql.DataFrame or polars.LazyFrame: The Delta table as a Spark DataFrame 
+                                                  or a Polars LazyFrame, depending on 
+                                                  the `engine` parameter.
+    """
+    delta_path = delta_table_path(schema, table)
+    engine_type = detect_engine(engine)
+    
+    if engine_type == "polars":
+        return engine.scan_delta(delta_path)
+    elif engine_type == "spark":
+        return engine.read.format("delta").load(delta_path)
+    else:
+        raise ValueError("Only Spark and Polars engines are supported for reading delta tables")
+
+def scrape_and_convert_data(urls, data_extractor, engine):
+    """
+    Scrapes data from a list of URLs, extracts it using a provided function,
+    and converts it to a PyArrow Table, Polars DataFrame, or Spark DataFrame.
+    """
+    scraped_data = data_extractor(urls)
+    engine_type = detect_engine(engine)
+    
+    if engine_type == "spark":
+        return engine.createDataFrame(scraped_data)
+    elif engine_type == "pyarrow":
+        if not scraped_data:
+            return engine.Table.from_pydict({})
+        column_names = scraped_data[0].keys()
+        data_dict = {
+            col: [entry.get(col) for entry in scraped_data] for col in column_names
+        }
+        return engine.Table.from_pydict(data_dict)
+    elif engine_type == "polars":
+        return engine.DataFrame(scraped_data).lazy()
+    else:
+        raise ValueError("Only Spark, Polars and PyArrow engines are supported")
 
 # METADATA ********************
 
@@ -720,8 +771,9 @@ def load_table(file):
                              nullstr='\\N',
                              ignore_errors=false)
         """).record_batch(),
-        delta_table_path(bronze_schema, table_name),
-        "pyarrow",
+        bronze_schema, 
+        table_name,
+        writer,
         con
     )
 
@@ -764,8 +816,9 @@ create_or_replace_delta_table(
             {bronze_schema}.t_title_ratings AS trt
             ON trt.tconst = tbs.tconst
     """).record_batch(), 
-    delta_table_path(silver_schema, "t_title"),
-    "pyarrow",
+    silver_schema, 
+    "t_title",
+    writer,
     con
 )
 
@@ -783,10 +836,11 @@ create_or_replace_delta_table(
 # CELL ********************
 
 create_or_replace_delta_table(
-    con.sql(f"""
+    con.sql(
+        f"""
         WITH unpivot_crew AS (
             UNPIVOT {bronze_schema}.t_title_crew
-            ON COLUMNS(* EXCLUDE (tconst))
+            ON directors, writers
             INTO
                 NAME category
                 VALUE nconst
@@ -801,7 +855,7 @@ create_or_replace_delta_table(
             WHERE
                 category NOT IN ('director', 'writer')
             
-            UNION ALL
+            UNION
             
             SELECT
                 tconst,
@@ -809,21 +863,49 @@ create_or_replace_delta_table(
                 UNNEST(string_to_array(nconst, ','))
             FROM
                 unpivot_crew
+        ),
+        tnb AS (
+            SELECT
+                tnb.nconst,
+                tnb.primaryName AS name,
+                tnb.birthYear AS birth_year,
+                tnb.deathYear AS death_year,
+                tnb.primaryProfession AS primary_profession,
+                STRING_AGG(tbs.primaryTitle || ' (' || tbs.startYear || ')', ', ') AS known_for_titles
+            FROM
+                (
+                    SELECT
+                        * EXCLUDE(knownForTitles),
+                        UNNEST(string_split(knownForTitles, ',')) AS known_for_tconst
+                    FROM
+                        {bronze_schema}.t_name_basics
+                ) AS tnb
+            LEFT OUTER JOIN
+                {bronze_schema}.t_title_basics tbs
+            ON
+                tbs.tconst = tnb.known_for_tconst
+            GROUP BY ALL
         )
-        SELECT DISTINCT
+        SELECT
             crw.tconst,
             crw.category,
-            tnb.primaryname AS name
+            tnb.name,
+            tnb.birth_year,
+            tnb.death_year,
+            tnb.primary_profession,
+            tnb.known_for_titles
         FROM
             comb_crew crw
         INNER JOIN
-            {bronze_schema}.t_name_basics AS tnb
+            tnb
         ON
-            tnb.nconst = crw.nconst;
-    """).record_batch(), 
-    delta_table_path(silver_schema, "t_crew"),
-    "pyarrow",
-    con
+            tnb.nconst = crw.nconst
+        """
+    ).record_batch(),
+    silver_schema, 
+    "t_crew",
+    writer,
+    con,
 )
 
 # METADATA ********************
@@ -842,8 +924,8 @@ create_or_replace_delta_table(
 PRIMARY_LANGUAGE_PATTERN = "%primary_language%,%"
 POPULAR_MOVIE_PATTERN = "%release_date%moviemeter%"
 
-imdb_df = scrape_and_convert_data(url_list, scrape_movie_data_threaded)
-lang_df = scrape_and_convert_data(LANGUAGE_URL, extract_lang_data)
+imdb_df = scrape_and_convert_data(url_list, scrape_movie_data_threaded, pa)
+lang_df = scrape_and_convert_data(LANGUAGE_URL, extract_lang_data, pa)
 
 create_or_replace_delta_table(
     con.sql(f"""
@@ -858,62 +940,58 @@ create_or_replace_delta_table(
                         ELSE 0 
                     END
                 ) AS rnk,
-                imd.type AS url_type,
+                CASE WHEN imd.type = 'top' THEN 'Y' ELSE 'N' END AS is_top,
+                CASE WHEN imd.type = 'toptv' THEN 'Y' ELSE 'N' END AS is_toptv,
+                CASE WHEN imd.type = 'top-rated-indian-movies' THEN 'Y' ELSE 'N' END AS is_top_indian_movies,
+                CASE WHEN imd.type = 'top-rated-malayalam-movies' THEN 'Y' ELSE 'N' END AS is_top_malayalam_movies,
+                CASE WHEN imd.type = 'top-rated-tamil-movies' THEN 'Y' ELSE 'N' END AS is_top_tamil_movies,
+                CASE WHEN imd.type = 'top-rated-telugu-movies' THEN 'Y' ELSE 'N' END AS is_top_telugu_movies,
+                CASE WHEN imd.type LIKE '{POPULAR_MOVIE_PATTERN}' THEN 'Y' ELSE 'N' END AS is_popular,
+                CASE WHEN imd.type LIKE '{PRIMARY_LANGUAGE_PATTERN}' THEN 'Y' ELSE 'N' END AS is_primary_lang,
+                CASE WHEN imd.type LIKE '%,asc%' THEN 'Y' ELSE 'N' END AS is_asc,
+                CASE WHEN imd.type LIKE '%,desc%' THEN 'Y' ELSE 'N' END AS is_desc,
+                CASE WHEN imd.type LIKE '%top_1000%' THEN 'Y' ELSE 'N' END AS is_in_top_1000,
                 CASE 
-                    WHEN imd.type IN (
-                        'toptv', 'top', 'top-rated-indian-movies',
-                        'top-rated-malayalam-movies', 'top-rated-tamil-movies', 'top-rated-telugu-movies'
-                    ) OR imd.type LIKE '%top_1000%' THEN 'Y' 
+                    WHEN is_top = 'Y' OR is_toptv = 'Y' OR is_top_indian_movies = 'Y' 
+                         OR is_top_malayalam_movies = 'Y' OR is_top_tamil_movies = 'Y' 
+                         OR is_top_telugu_movies = 'Y' OR is_in_top_1000 = 'Y' 
+                    THEN 'Y' 
                     ELSE 'N' 
-                END AS is_top_title,
-                CASE 
-                    WHEN imd.type LIKE '%top_1000%' THEN 'Y' 
-                    ELSE 'N' 
-                END AS is_in_top_1000,
-                CASE 
-                    WHEN imd.type LIKE '{POPULAR_MOVIE_PATTERN}' THEN 'Y' 
-                    ELSE 'N' 
-                END AS is_popular,
-                CASE 
-                    WHEN imd.type LIKE '{PRIMARY_LANGUAGE_PATTERN}' THEN 'Y' 
-                    ELSE 'N' 
-                END AS is_primary_lang,
-                CASE 
-                    WHEN imd.type LIKE '%,asc%' THEN 'Y' 
-                    ELSE 'N' 
-                END AS is_asc,
-                CASE 
-                    WHEN imd.type LIKE '%,desc%' THEN 'Y' 
-                    ELSE 'N' 
-                END AS is_desc
+                END AS is_top_title
             FROM imdb_df imd
             LEFT JOIN lang_df lng
                 ON CASE
                     WHEN imd.type LIKE '{PRIMARY_LANGUAGE_PATTERN}'
                     THEN regexp_extract(imd.type, 'primary_language=([a-z]+)', 1)
-                    ELSE NULL
+                    WHEN imd.type LIKE '%malayalam%'
+                    THEN 'ml'
+                    WHEN imd.type LIKE '%tamil%'
+                    THEN 'ta'
+                    WHEN imd.type LIKE '%telugu%'
+                    THEN 'te'
                 END = lng.lang_code
         )
         SELECT
             tconst,
-            STRING_AGG(lang_name, '; ') AS language_lst,
+            ARRAY_TO_STRING(LIST(DISTINCT lang_name), '; ') AS language_lst,
             MAX(CASE WHEN is_top_title = 'Y' THEN rnk END) AS top_title_rnk,
             MAX(CASE WHEN is_popular = 'Y' THEN rnk END) AS popularity_rnk,
             MAX(CASE WHEN is_primary_lang = 'Y' AND is_asc = 'Y' THEN rnk END) AS language_popularity_rnk,
             MAX(CASE WHEN is_primary_lang = 'Y' AND is_desc = 'Y' THEN rnk END) AS language_votes_rnk,
-            MAX(CASE WHEN url_type = 'top' THEN rnk END) AS top_250_movie_rnk,
-            MAX(CASE WHEN url_type = 'toptv' THEN rnk END) AS top_250_tv_rnk,
-            MAX(CASE WHEN url_type = 'top-rated-indian-movies' THEN rnk END) AS top_indian_movie_rnk,
-            MAX(CASE WHEN url_type = 'top-rated-malayalam-movies' THEN rnk END) AS top_malayalam_movie_rnk,
-            MAX(CASE WHEN url_type = 'top-rated-tamil-movies' THEN rnk END) AS top_tamil_movie_rnk,
-            MAX(CASE WHEN url_type = 'top-rated-telugu-movies' THEN rnk END) AS top_telugu_movie_rnk,
-            COALESCE(MAX(is_in_top_1000), 'N') AS is_top_1000_movie,
-            COALESCE(MAX(is_top_title), 'N') AS is_top_title
+            MAX(CASE WHEN is_top = 'Y' THEN rnk END) AS top_250_movie_rnk,
+            MAX(CASE WHEN is_toptv = 'Y' THEN rnk END) AS top_250_tv_rnk,
+            MAX(CASE WHEN is_top_indian_movies = 'Y' THEN rnk END) AS top_indian_movie_rnk,
+            MAX(CASE WHEN is_top_malayalam_movies = 'Y' THEN rnk END) AS top_malayalam_movie_rnk,
+            MAX(CASE WHEN is_top_tamil_movies = 'Y' THEN rnk END) AS top_tamil_movie_rnk,
+            MAX(CASE WHEN is_top_telugu_movies = 'Y' THEN rnk END) AS top_telugu_movie_rnk,
+            MAX(is_in_top_1000) AS is_top_1000_movie,
+            MAX(is_top_title) AS is_top_title
         FROM base
         GROUP BY ALL
     """).record_batch(), 
-    delta_table_path(silver_schema, "t_top_title"),
-    "pyarrow",
+    silver_schema, 
+    "t_top_title",
+    writer,
     con
 )
 
@@ -930,13 +1008,13 @@ create_or_replace_delta_table(
 
 # CELL ********************
 
-bo_df = scrape_and_convert_data(yearly_box_office_url_list, scrape_movie_data_threaded)
+bo_df = scrape_and_convert_data(yearly_box_office_url_list, scrape_movie_data_threaded, pa)
 
 create_or_replace_delta_table(
     con.sql(f"""
         SELECT
             tconst,
-            box_office AS box_office_usd
+            box_office
         FROM
             bo_df
         WHERE
@@ -983,8 +1061,9 @@ create_or_replace_delta_table(
             ) = 1
     """
     ).record_batch(),
-    delta_table_path(silver_schema, "t_boxoffice"),
-    "pyarrow",
+    silver_schema,
+    "t_boxoffice",
+    writer,
     con
 )
 
@@ -1005,6 +1084,24 @@ create_or_replace_delta_table(
     con.sql(f"""
         SELECT 
             * EXCLUDE (top_title_rnk, popularity_rnk, language_popularity_rnk, language_votes_rnk), 
+            CASE 
+                WHEN is_top_title = 'Y' THEN 
+                    ROW_NUMBER() OVER (
+                        ORDER BY
+                            top_250_movie_rnk,
+                            top_250_tv_rnk,
+                            top_indian_movie_rnk,
+                            top_malayalam_movie_rnk,
+                            top_tamil_movie_rnk,
+                            top_tamil_movie_rnk,
+                            top_telugu_movie_rnk,
+                            is_top_title DESC,
+                            box_office DESC NULLS LAST,
+                            num_votes DESC NULLS LAST,
+                            avg_rating DESC NULLS LAST
+                    ) 
+                ELSE 9999 
+            END AS top_title_rnk,
             ROW_NUMBER() OVER (
                 ORDER BY
                     popularity_rnk ASC NULLS LAST,
@@ -1018,33 +1115,33 @@ create_or_replace_delta_table(
         FROM (
             SELECT
                 ttl.tconst,
-                MAX(ttl.title_type) AS title_type,
-                MAX(ttl.primary_title) AS primary_title,
-                MAX(ttl.original_title) AS original_title,
-                MAX(ttl.release_year) AS release_year,
-                MAX(ttl.is_adult) AS is_adult,
-                MAX(ttl.runtime_min) AS runtime_min,
-                MAX(ttl.genres) AS genres,
-                MAX(ttl.avg_rating) AS avg_rating,
-                MAX(ttl.num_votes) AS num_votes,
-                MAX(tbo.box_office_usd) AS box_office,
-                MAX(top.top_title_rnk) AS top_title_rnk,
-                MAX(top.popularity_rnk) AS popularity_rnk,
-                MAX(top.language_popularity_rnk) AS language_popularity_rnk,
-                MAX(top.language_votes_rnk) AS language_votes_rnk,
-                COALESCE(MAX(top.top_250_movie_rnk), 999) AS top_250_movie_rnk,
-                COALESCE(MAX(top.top_250_tv_rnk), 999) AS top_250_tv_rnk,
-                COALESCE(MAX(top.top_indian_movie_rnk), 999) AS top_indian_movie_rnk,
-                COALESCE(MAX(top.top_malayalam_movie_rnk), 999) AS top_malayalam_movie_rnk,
-                COALESCE(MAX(top.top_tamil_movie_rnk), 999) AS top_tamil_movie_rnk,
-                COALESCE(MAX(top.top_telugu_movie_rnk), 999) AS top_telugu_movie_rnk,
-                COALESCE(MAX(top.is_top_1000_movie), 'N') AS is_top_1000_movie,
-                COALESCE(MAX(top.is_top_title), 'N') AS is_top_title,
-                MAX(top.language_lst) AS language_lst,
+                ttl.title_type,
+                ttl.primary_title,
+                ttl.original_title,
+                ttl.release_year,
+                ttl.is_adult,
+                ttl.runtime_min,
+                ttl.genres,
+                ttl.avg_rating,
+                ttl.num_votes,
+                tbo.box_office,
+                top.top_title_rnk,
+                top.popularity_rnk,
+                top.language_popularity_rnk,
+                top.language_votes_rnk,
+                COALESCE(top.top_250_movie_rnk, 9999) AS top_250_movie_rnk,
+                COALESCE(top.top_250_tv_rnk, 9999) AS top_250_tv_rnk,
+                COALESCE(top.top_indian_movie_rnk, 9999) AS top_indian_movie_rnk,
+                COALESCE(top.top_malayalam_movie_rnk, 9999) AS top_malayalam_movie_rnk,
+                COALESCE(top.top_tamil_movie_rnk, 9999) AS top_tamil_movie_rnk,
+                COALESCE(top.top_telugu_movie_rnk, 9999) AS top_telugu_movie_rnk,
+                COALESCE(top.is_top_1000_movie, 'N') AS is_top_1000_movie,
+                COALESCE(top.is_top_title, 'N') AS is_top_title,
+                top.language_lst AS language_lst,
                 STRING_AGG(CASE WHEN tcr.category = 'director' THEN tcr.name END, '; ') AS director_lst,
                 STRING_AGG(CASE WHEN tcr.category = 'actor' THEN tcr.name END, '; ') AS actor_lst,
                 STRING_AGG(CASE WHEN tcr.category = 'actress' THEN tcr.name END, '; ') AS actress_lst,
-                CAST(CURRENT_DATE AS STRING) AS last_refresh_date
+                CURRENT_DATE AS last_refresh_date
             FROM 
                 {silver_schema}.t_title AS ttl
             LEFT OUTER JOIN 
@@ -1063,8 +1160,9 @@ create_or_replace_delta_table(
                 ALL
         )
     """).record_batch(),
-    delta_table_path(gold_schema, "t_imdb"),
-    "pyarrow",
+    gold_schema,
+    "t_imdb",
+    writer,
     con
 )
 
