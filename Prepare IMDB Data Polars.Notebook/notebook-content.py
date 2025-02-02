@@ -31,7 +31,9 @@
 
 # META {
 # META   "language": "python",
-# META   "language_group": "jupyter_python"
+# META   "language_group": "jupyter_python",
+# META   "frozen": false,
+# META   "editable": true
 # META }
 
 # MARKDOWN ********************

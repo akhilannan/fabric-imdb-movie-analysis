@@ -42,7 +42,9 @@
 
 # META {
 # META   "language": "python",
-# META   "language_group": "jupyter_python"
+# META   "language_group": "jupyter_python",
+# META   "frozen": true,
+# META   "editable": false
 # META }
 
 # MARKDOWN ********************
@@ -453,7 +455,7 @@ def create_or_replace_delta_table(df, schema, table, engine, duckdb_con=None):
         raise ValueError("Only Spark, Polars and DeltaLake engines are supported for writing delta tables")
     
     if duckdb_con is not None:
-        duckdb_con.create_view(schema=schema, table=table)
+        duckdb_con.setup_lakehouse_views(schema=schema, table=table)
 
 def read_delta_table(schema, table, engine):
     """
@@ -542,25 +544,29 @@ def parallel_load_tables(file_list, parallelism, load_table_func):
 
 # CELL ********************
 
-import base64
 import time
+import jwt
+
 
 class DuckDBLakehouseConnector:
     """
-    A wrapper class for DuckDB connection that handles Fabric Lakehouse connectivity
-    with automatic token refresh capability.
+    A wrapper for a DuckDB connection that handles Fabric Lakehouse connectivity
+    with automatic token refresh.
     """
-    
+
+    # Buffer period (in seconds) before token expiration to trigger a refresh.
+    TOKEN_REFRESH_BUFFER = 60
+
     def __init__(
-        self, 
-        lakehouse_name=None, 
-        workspace_name=None, 
+        self,
+        lakehouse_name=None,
+        workspace_name=None,
         setup_views=True,
-        database="temp"
+        database="temp",
     ):
         """
         Initialize the Lakehouse connector.
-        
+
         Parameters:
         -----------
         lakehouse_name : str, optional
@@ -577,149 +583,129 @@ class DuckDBLakehouseConnector:
             - "<path>": Creates/opens a persistent database at the specified path
         """
         self._workspace_id = fabric.resolve_workspace_id(workspace_name)
-        self._lakehouse_id = (fabric.resolve_item_id(lakehouse_name, item_type="Lakehouse", workspace=workspace_name) 
-                            if lakehouse_name else fabric.get_lakehouse_id())
-        self._abfss_path = f"abfss://{self._workspace_id}@onelake.dfs.fabric.microsoft.com/{self._lakehouse_id}/Tables"
-        
+        self._lakehouse_id = (
+            fabric.resolve_item_id(
+                lakehouse_name, item_type="Lakehouse", workspace=workspace_name
+            )
+            if lakehouse_name
+            else fabric.get_lakehouse_id()
+        )
+        self._abfss_path = (
+            f"abfss://{self._workspace_id}@onelake.dfs.fabric.microsoft.com/"
+            f"{self._lakehouse_id}/Tables"
+        )
+        self._con = self._connect(database)
+        self._current_token = self._get_fresh_token()
+        self._update_onelake_secret(self._current_token)
+        self._con.sql("SET enable_object_cache=true;")
+        if setup_views:
+            self.setup_lakehouse_views()
+
+    def _connect(self, database):
+        """Helper to create a DuckDB connection based on database configuration."""
         if database == "memory":
-            self._con = duckdb.connect(':memory:')
+            return duckdb.connect(":memory:")
         elif database == "temp":
-            self._con = duckdb.connect(f'temp_{time.time_ns()}.duckdb')
+            return duckdb.connect(f"temp_{time.time_ns()}.duckdb")
         else:
-            self._con = duckdb.connect(database)
-            
-        self._current_token = None
-        self._initialize(setup_views)
+            return duckdb.connect(database)
+
+    def _update_onelake_secret(self, token):
+        """Update the onelake secret with the provided token."""
+        self._con.sql(
+            f"""
+            CREATE OR REPLACE SECRET onelake (
+                TYPE AZURE,
+                PROVIDER ACCESS_TOKEN,
+                ACCESS_TOKEN '{token}'
+            );
+        """
+        )
 
     def _is_token_valid(self, token):
-        """Check if the token is still valid by examining its expiration time."""
+        """
+        Check if the token is still valid by decoding its JWT payload.
+        The token is considered invalid if it expires within TOKEN_REFRESH_BUFFER seconds.
+        """
         try:
-            # Token is in JWT format - split and decode the payload (second part)
-            payload = token.split('.')[1]
-            # Add padding if needed
-            payload += '=' * (-len(payload) % 4)
-            decoded = json.loads(base64.b64decode(payload))
-            # Check if token has expired
-            expiration_time = decoded.get('exp', 0)
-            current_time = time.time()
-            return current_time < expiration_time
+            decoded = jwt.decode(token, options={"verify_signature": False})
+            expiration_time = decoded.get("exp", 0)
+            return time.time() < (expiration_time - self.TOKEN_REFRESH_BUFFER)
         except Exception:
             return False
 
     def _get_fresh_token(self):
         """Get a fresh token from notebookutils."""
-        return notebookutils.credentials.getToken('storage')
+        return notebookutils.credentials.getToken("storage")
 
-    def _update_onelake_secret(self, token):
-        """Update the onelake secret with a fresh token."""
-        self._con.sql(f"""
-        CREATE OR REPLACE SECRET onelake (
-            TYPE AZURE,
-            PROVIDER ACCESS_TOKEN,
-            ACCESS_TOKEN '{token}'
-        );
-        """)
+    def _check_and_refresh_token(self):
+        """Refresh the token if it is no longer valid, with proper error handling."""
+        if not self._is_token_valid(self._current_token):
+            try:
+                new_token = self._get_fresh_token()
+                self._update_onelake_secret(new_token)
+                self._current_token = new_token
+            except Exception as e:
+                raise RuntimeError("Failed to refresh token") from e
 
-    def _setup_lakehouse_views(self, schema=None, table=None):
-        """Setup lakehouse views.
-        
+    def setup_lakehouse_views(self, schema=None, table=None):
+        """
+        Public method to set up lakehouse views, optionally filtered by schema and/or table.
+        This method refreshes the token if necessary before creating the views.
+
         Parameters:
-        -----------
-        schema : str, optional
-            Specific schema to create views for
-        table : str, optional
-            Specific table to create view for (requires schema to be specified)
+            schema (str, optional): If provided, only views in this schema will be set up.
+            table (str, optional): If provided, only the view for this table will be set up.
         """
+        self._check_and_refresh_token()
+
+        conditions = []
+        if schema:
+            conditions.append(f"sch = '{schema}'")
+        if table:
+            conditions.append(f"tbl = '{table}'")
+        where_clause = f"WHERE {' AND '.join(conditions)}" if conditions else ""
+
         base_query = f"""
-        WITH table_paths AS (
-            SELECT DISTINCT 
-                regexp_extract(file, '^(.*?)/[^/]+\\.parquet$', 1) as path,
-                split_part(path, '/', -2) as sch,
-                split_part(path, '/', -1) as tbl
-            FROM glob ('{self._abfss_path}/*/*/*')
-            WHERE 1=1
-            {f"AND sch = '{schema}'" if schema else ''}
-            {f"AND tbl = '{table}'" if table else ''}
-        )
-        SELECT 
-            string_agg('(''' || sch || ''', ''' || tbl || ''')', ',') as view_tuples,
-            string_agg(
-                'CREATE SCHEMA IF NOT EXISTS ' || sch || '; ' ||
-                'CREATE OR REPLACE VIEW ' || sch || '.' || tbl || 
-                ' AS SELECT * FROM delta_scan(''' || '{self._abfss_path}/' || sch || '/' || tbl || ''')'
-            , '; ') as setup_commands
-        FROM table_paths;
+            WITH table_paths AS (
+                SELECT DISTINCT 
+                    regexp_extract(file, '^(.*?)/[^/]+\\.parquet$', 1) as path,
+                    split_part(path, '/', -2) as sch,
+                    split_part(path, '/', -1) as tbl
+                FROM glob('{self._abfss_path}/*/*/*')
+                {where_clause}
+            )
+            SELECT 
+                string_agg('(''' || sch || ''', ''' || tbl || ''')', ',') as view_tuples,
+                string_agg(
+                    'CREATE SCHEMA IF NOT EXISTS ' || sch || '; ' ||
+                    'CREATE OR REPLACE VIEW ' || sch || '.' || tbl ||
+                    ' AS SELECT * FROM delta_scan(''' || '{self._abfss_path}/' || sch || '/' || tbl || ''')',
+                    '; '
+                ) as setup_commands
+            FROM table_paths;
         """
-        
+
         result = self._con.sql(base_query).fetchone()
-        setup_commands = result[1]
-        view_tuples = result[0]
-        
+        view_tuples, setup_commands = result[0], result[1]
+
         if setup_commands:
             self._con.sql(setup_commands)
             if view_tuples:
                 show_query = f"SELECT * FROM (SHOW ALL TABLES) WHERE (schema, name) IN ({view_tuples})"
                 self._con.sql(show_query).show(max_width=150)
-            self._con.sql('CHECKPOINT')
+            self._con.sql("CHECKPOINT")
 
-    def create_view(self, schema, table=None):
-        """
-        Create view(s) for specific schema/table combination.
-        
-        Parameters:
-        -----------
-        schema : str
-            Schema name to create views for
-        table : str, optional
-            Specific table name to create view for. If None, creates views for all tables in schema
-        """
-        self._check_and_refresh_token()
-        self._setup_lakehouse_views(schema=schema, table=table)
-
-    def _initialize(self, setup_views=True):
-        """
-        Initial setup of token and optionally views.
-        
-        Parameters:
-        -----------
-        setup_views : bool
-            Whether to set up lakehouse views
-        """
-        self._current_token = self._get_fresh_token()
-        self._update_onelake_secret(self._current_token)
-        self._con.sql("SET enable_object_cache=true;")
-        
-        if setup_views:
-            self._setup_lakehouse_views()
-            
-    def _check_and_refresh_token(self):
-        """Check token validity and refresh if needed."""
-        if not self._is_token_valid(self._current_token):
-            self._current_token = self._get_fresh_token()
-            self._update_onelake_secret(self._current_token)
-    
     def sql(self, query):
-        """
-        Execute SQL with automatic token refresh.
-        
-        Parameters:
-        -----------
-        query : str
-            SQL query to execute
-            
-        Returns:
-        --------
-        DuckDBPyRelation
-            Query result
-        """
         self._check_and_refresh_token()
         return self._con.sql(query)
-    
+
     def __getattr__(self, name):
-        """Delegate all other attributes to the underlying connection."""
         return getattr(self._con, name)
 
+
 con = DuckDBLakehouseConnector(setup_views=False)
+
 
 # METADATA ********************
 
@@ -735,51 +721,83 @@ con = DuckDBLakehouseConnector(setup_views=False)
 # CELL ********************
 
 def load_table(file):
-    tmp_con = DuckDBLakehouseConnector(setup_views=False, database="memory")
+    max_retries = 3
+    raw_file_path = raw_path + file 
 
-    raw_file_path = raw_path + file
-    urlretrieve(DATASET_URL + file, raw_file_path)
-    table_name = "t_" + file.replace('.tsv.gz', '').replace(".", "_")
+    for attempt in range(max_retries):
+        tmp_con = None
+        try:
+            tmp_con = DuckDBLakehouseConnector(setup_views=False, database="memory")
 
-    schema = {
-        "primaryTitle": "VARCHAR",
-        "averageRating": "DOUBLE",
-        "numVotes": "BIGINT",
-        "startYear": "BIGINT",
-        "endYear": "BIGINT",
-        "deathYear": "BIGINT",
-        "birthYear": "BIGINT",
-        "runtimeMinutes": "BIGINT",
-        "isAdult": "TINYINT",
-    }
+            urlretrieve(DATASET_URL + file, raw_file_path)
 
-    detected_columns = con.sql(f"SELECT Columns FROM sniff_csv('{raw_file_path}', sample_size = 1)").fetchone()[0]
-    cast_statements = [
-        f"CAST({col_info['name']} AS {schema[col_info['name']]}) AS {col_info['name']}"
-        if col_info['name'] in schema
-        else col_info['name']
-        for col_info in detected_columns
-    ]
+            table_name = "t_" + file.replace(".tsv.gz", "").replace(".", "_")
+            schema = {
+                "primaryTitle": "VARCHAR",
+                "averageRating": "DOUBLE",
+                "numVotes": "BIGINT",
+                "startYear": "BIGINT",
+                "endYear": "BIGINT",
+                "deathYear": "BIGINT",
+                "birthYear": "BIGINT",
+                "runtimeMinutes": "BIGINT",
+                "isAdult": "TINYINT",
+            }
 
-    create_or_replace_delta_table(
-        tmp_con.sql(f"""
-            SELECT {','.join(cast_statements)}
-            FROM read_csv('{raw_file_path}',
-                             header=true,
-                             delim='\\t',
-                             quote='',
-                             nullstr='\\N',
-                             ignore_errors=false)
-        """).record_batch(),
-        bronze_schema, 
-        table_name,
-        writer,
-        con
-    )
+            detected_columns = con.sql(
+                f"SELECT Columns FROM sniff_csv('{raw_file_path}', sample_size = 1)"
+            ).fetchone()[0]
+            cast_statements = [
+                (
+                    f"CAST({col_info['name']} AS {schema[col_info['name']]}) AS {col_info['name']}"
+                    if col_info["name"] in schema
+                    else col_info["name"]
+                )
+                for col_info in detected_columns
+            ]
 
-    tmp_con.close()
+            create_or_replace_delta_table(
+                tmp_con.sql(
+                    f"""
+                    SELECT {','.join(cast_statements)}
+                    FROM read_csv('{raw_file_path}',
+                                 header=true,
+                                 delim='\\t',
+                                 quote='',
+                                 nullstr='\\N',
+                                 ignore_errors=false)
+                """
+                ).record_batch(),
+                bronze_schema,
+                table_name,
+                writer,
+                con,
+            )
+
+            tmp_con.close()
+            return  # Success - exit the function
+
+        except Exception as e:
+            # Cleanup resources
+            if tmp_con is not None:
+                tmp_con.close()
+            if os.path.exists(raw_file_path):
+                os.remove(raw_file_path)  # Remove potentially corrupted file
+
+            # Retry logic
+            if attempt < max_retries:
+                print(
+                    f"Retrying {file} (attempt {attempt + 1}/{max_retries}) due to error: {str(e)}"
+                )
+                continue
+            else:
+                raise RuntimeError(
+                    f"Failed to process {file} after {max_retries} attempts"
+                ) from e
+
 
 parallel_load_tables(file_list, parallelism, load_table)
+
 
 # METADATA ********************
 
