@@ -10,7 +10,7 @@ model Model
 
 annotation __PBI_TimeIntelligenceEnabled = 0
 
-annotation PBIDesktopVersion = 2.138.1452.0 (24.11)
+annotation PBIDesktopVersion = 2.139.1678.0 (24.12)+2a034ab280bddf891eb7bb9ebfe6996f9c3a3196
 
 annotation PBI_QueryOrder = ["DatabaseQuery"]
 
@@ -21,4 +21,6 @@ annotation __TEdtr = 1
 annotation TabularEditor_SerializeOptions = {"IgnoreInferredObjects":true,"IgnoreInferredProperties":true,"IgnoreTimestamps":true,"SplitMultilineStrings":true,"PrefixFilenames":false,"LocalTranslations":false,"LocalPerspectives":false,"LocalRelationships":false,"Levels":["Data Sources","Perspectives","Relationships","Roles","Shared Expressions","Tables","Tables/Calculation Items","Tables/Columns","Tables/Hierarchies","Tables/Measures","Tables/Partitions","Translations"],"TmdlOptions":{"IncludeRefs":false,"ExpressionTrimStyle":"TrimTrailingWhitespaces"}}
 
 ref table IMDB
+
+ref cultureInfo en-US
 
