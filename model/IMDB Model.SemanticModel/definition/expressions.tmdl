@@ -1,9 +1,7 @@
-expression DatabaseQuery =
+expression OneLake =
 		let
-		    database = Sql.Database("CEAEJAPELL3URLHQQ3YNLVVB4I-773FYYP62JMU3GPYQH2YDWFOLU.datawarehouse.fabric.microsoft.com", "e5321f23-10d7-4dfd-9749-6017dab254ad")
+		    Source = AzureStorage.DataLake("https://centralindia-onelake.dfs.fabric.microsoft.com/615cf6ff-d2fe-4d59-99f8-81f581d8ae5d/b33f982a-d05e-4877-9dfe-ea9c74f4d2ca", [HierarchicalNavigation=true])
 		in
-		    database
-	lineageTag: a23dc01e-9d2a-40f7-8540-93f1530d5587
-
-	annotation PBI_IncludeFutureArtifacts = False
+		    Source
+	lineageTag: cb4aaeb5-d344-45b9-a612-ef6b6e6c071b
 

@@ -8,19 +8,11 @@ table IMDB
 		formatString: 0.0
 		lineageTag: 6a2e45b0-5dec-4545-8f60-0b9a42128cdf
 
-		changedProperty = Name
-
-		changedProperty = FormatString
-
 	measure 'Avg Runtime (mins)' =
 			
 			AVERAGE ( IMDB[runtime_min] )
 		formatString: 0
 		lineageTag: 065b9401-8ea6-41ef-a6ac-a49dc5fcbc76
-
-		changedProperty = Name
-
-		changedProperty = FormatString
 
 	measure 'Box Office $' =
 			
@@ -43,21 +35,11 @@ table IMDB
 				RETURN
 				    BaseFormat & NumberFormat
 
-		changedProperty = Name
-
-		changedProperty = FormatString
-
-		changedProperty = FormatStringDefinition
-
 	measure 'Data as of' =
 			
 			MAX ( IMDB[last_refresh_date] )
 		formatString: dd-MMM-yyyy
 		lineageTag: 4bec6678-879f-4da2-9798-6224c7b59f53
-
-		changedProperty = Name
-
-		changedProperty = FormatString
 
 		annotation PBI_FormatHint = {"isCustom":true}
 
@@ -67,19 +49,11 @@ table IMDB
 		formatString: #,0
 		lineageTag: 129dad9e-7a53-4212-8718-9ddba097c619
 
-		changedProperty = Name
-
-		changedProperty = FormatString
-
 	measure 'Title #' =
 			
 			COUNTROWS ( IMDB )
 		formatString: #,0
 		lineageTag: 0d9b0666-2c49-4104-9ed8-76a22c5313df
-
-		changedProperty = Name
-
-		changedProperty = FormatString
 
 	measure 'IMDB Link' =
 			
@@ -103,19 +77,15 @@ table IMDB
 	column 'Popularity Rank'
 		dataType: int64
 		formatString: 0
-		sourceProviderType: int
 		lineageTag: 220a4c52-15df-407c-bd96-cb90d0e4ba89
 		sourceLineageTag: overall_popularity_rnk
 		summarizeBy: none
 		sourceColumn: overall_popularity_rnk
 
-		changedProperty = Name
-
 		annotation SummarizationSetBy = Automatic
 
 	column 'IMDB ID'
 		dataType: string
-		sourceProviderType: varchar(8000)
 		lineageTag: 20cd3900-79f4-4ebf-906e-2001e41f64a8
 		sourceLineageTag: tconst
 		summarizeBy: none
@@ -123,17 +93,13 @@ table IMDB
 
 	column 'Title Type'
 		dataType: string
-		sourceProviderType: varchar(8000)
 		lineageTag: 15eaab2b-fe74-43c7-b7d7-a3c7a64708d0
 		sourceLineageTag: title_type
 		summarizeBy: none
 		sourceColumn: title_type
 
-		changedProperty = Name
-
 	column 'Primary Title'
 		dataType: string
-		sourceProviderType: varchar(8000)
 		lineageTag: af082e24-f276-43b6-8cb8-7cf637b3eded
 		sourceLineageTag: primary_title
 		summarizeBy: none
@@ -141,7 +107,6 @@ table IMDB
 
 	column 'Original Title'
 		dataType: string
-		sourceProviderType: varchar(8000)
 		lineageTag: 4b1117c7-737c-4aeb-b70c-c71867d1d7e1
 		sourceLineageTag: original_title
 		summarizeBy: none
@@ -150,7 +115,6 @@ table IMDB
 	column 'Release Year'
 		dataType: int64
 		formatString: 0
-		sourceProviderType: bigint
 		lineageTag: 021882a1-30d3-4023-b428-6756e0680a3c
 		sourceLineageTag: yr
 		summarizeBy: none
@@ -158,228 +122,164 @@ table IMDB
 
 	column 'Is Adult'
 		dataType: string
-		sourceProviderType: varchar(8000)
 		lineageTag: bbd7c1ba-df81-4e8b-a669-a5d3c78a618f
 		sourceLineageTag: is_adult
 		summarizeBy: none
 		sourceColumn: is_adult
 
-		changedProperty = Name
-
 	column runtime_min
 		dataType: int64
 		isHidden
 		formatString: 0
-		sourceProviderType: bigint
 		lineageTag: bb674835-a25d-43cd-bd23-ace0e882622b
 		sourceLineageTag: runtime_min
 		summarizeBy: sum
 		sourceColumn: runtime_min
 
-		changedProperty = IsHidden
-
 	column Generes
 		dataType: string
-		sourceProviderType: varchar(8000)
 		lineageTag: 7170c79c-9397-4804-a0bc-e7fd61969dae
 		sourceLineageTag: genres
 		summarizeBy: none
 		sourceColumn: genres
 
-		changedProperty = Name
-
 	column avg_rating
 		dataType: double
 		isHidden
-		sourceProviderType: float
 		lineageTag: d649adcc-3499-4638-baa6-b88d7b84ad2d
 		sourceLineageTag: avg_rating
 		summarizeBy: sum
 		sourceColumn: avg_rating
 
-		changedProperty = IsHidden
-
 	column num_votes
 		dataType: int64
 		isHidden
 		formatString: 0
-		sourceProviderType: bigint
 		lineageTag: e462b090-1809-4389-be62-3649ec717fd5
 		sourceLineageTag: num_votes
 		summarizeBy: sum
 		sourceColumn: num_votes
 
-		changedProperty = IsHidden
-
 	column box_office
 		dataType: int64
 		isHidden
 		formatString: 0
-		sourceProviderType: bigint
 		lineageTag: 520c9e74-214d-45c9-83ec-017d4eea7bb8
 		sourceLineageTag: box_office
 		summarizeBy: sum
 		sourceColumn: box_office
 
-		changedProperty = IsHidden
-
 	column 'Top 250 Movie Rank'
 		dataType: int64
 		formatString: 0
-		sourceProviderType: bigint
 		lineageTag: 7a1548fc-7268-469d-a776-afd6f71fa4e0
 		sourceLineageTag: top_250_rnk
 		summarizeBy: none
 		sourceColumn: top_250_movie_rnk
 
-		changedProperty = Name
-
 	column 'Is Top 1000 Movie'
 		dataType: string
-		sourceProviderType: varchar(8000)
 		lineageTag: 45558799-e1a5-4bfd-9b7c-d79b2faf8d38
 		sourceLineageTag: is_top_1000_movies
 		summarizeBy: none
 		sourceColumn: is_top_1000_movie
 
-		changedProperty = Name
-
 	column Languages
 		dataType: string
-		sourceProviderType: varchar(8000)
 		lineageTag: 08faa8c8-6205-42d4-a7a4-585552c33923
 		sourceLineageTag: language_lst
 		summarizeBy: none
 		sourceColumn: language_lst
 
-		changedProperty = Name
-
 	column Directors
 		dataType: string
-		sourceProviderType: varchar(8000)
 		lineageTag: 937aa027-9021-4890-998d-6186bbb85d11
 		sourceLineageTag: director_lst
 		summarizeBy: none
 		sourceColumn: director_lst
 
-		changedProperty = Name
-
 	column Actors
 		dataType: string
-		sourceProviderType: varchar(8000)
 		lineageTag: 78ce061c-85f5-488c-8d20-a3423a3af50c
 		sourceLineageTag: actor_lst
 		summarizeBy: none
 		sourceColumn: actor_lst
 
-		changedProperty = Name
-
 	column Actresses
 		dataType: string
-		sourceProviderType: varchar(8000)
 		lineageTag: 6e40e0f3-b0d6-442b-b7de-d5d1f623226a
 		sourceLineageTag: actress_lst
 		summarizeBy: none
 		sourceColumn: actress_lst
 
-		changedProperty = Name
-
 	column last_refresh_date
 		dataType: dateTime
 		isHidden
 		formatString: General Date
-		sourceProviderType: date
 		lineageTag: 8ac58084-7b16-4c72-b1fd-bad2f5fbefd9
 		sourceLineageTag: last_refresh_date
 		summarizeBy: none
 		sourceColumn: last_refresh_date
 
-		changedProperty = IsHidden
-
 	column 'Is Top Title'
 		dataType: string
-		sourceProviderType: varchar(8000)
 		lineageTag: 942cdbb0-76e5-4c1f-952a-03bbf6ccedb5
 		sourceLineageTag: is_top_1000_movies
 		summarizeBy: none
 		sourceColumn: is_top_title
 
-		changedProperty = Name
-
 	column 'Top 250 TV Rank'
 		dataType: int64
 		formatString: 0
-		sourceProviderType: bigint
 		lineageTag: b3ca707f-b61d-46fb-95a2-3ebbc1f84a02
 		sourceLineageTag: top_250_rnk
 		summarizeBy: none
 		sourceColumn: top_250_tv_rnk
 
-		changedProperty = Name
-
 	column 'Top Indian Movie Rank'
 		dataType: int64
 		formatString: 0
-		sourceProviderType: bigint
 		lineageTag: 9c794bb5-39cc-4822-b465-3b3519347efa
 		sourceLineageTag: top_250_rnk
 		summarizeBy: none
 		sourceColumn: top_indian_movie_rnk
 
-		changedProperty = Name
-
 	column 'Top Malayalam Movie Rank'
 		dataType: int64
 		formatString: 0
-		sourceProviderType: bigint
 		lineageTag: 3b08672e-a691-44ad-9e51-27de68918a9f
 		sourceLineageTag: top_250_rnk
 		summarizeBy: none
 		sourceColumn: top_malayalam_movie_rnk
 
-		changedProperty = Name
-
 	column 'Top Tamil Movie Rank'
 		dataType: int64
 		formatString: 0
-		sourceProviderType: bigint
 		lineageTag: 070eff5e-e2d7-4857-b9d2-c4d090692f8c
 		sourceLineageTag: top_250_rnk
 		summarizeBy: none
 		sourceColumn: top_tamil_movie_rnk
 
-		changedProperty = Name
-
 	column 'Top Telugu Movie Rank'
 		dataType: int64
 		formatString: 0
-		sourceProviderType: bigint
 		lineageTag: 1a406ca7-9e94-40c6-bfc1-e7091602bf21
 		sourceLineageTag: top_250_rnk
 		summarizeBy: none
 		sourceColumn: top_telugu_movie_rnk
 
-		changedProperty = Name
-
 	column 'Top Title Rank'
 		dataType: int64
 		formatString: 0
-		sourceProviderType: int
 		lineageTag: be063804-dbc9-4233-8482-fbd80593bc0d
 		sourceLineageTag: overall_popularity_rnk
 		summarizeBy: none
 		sourceColumn: top_title_rnk
-
-		changedProperty = Name
 
 	partition IMDB = entity
 		mode: directLake
 		source
 			entityName: t_imdb
 			schemaName: gold
-			expressionSource: DatabaseQuery
-
-	changedProperty = Name
-
-	annotation PBI_ResultType = Table
+			expressionSource: OneLake
 

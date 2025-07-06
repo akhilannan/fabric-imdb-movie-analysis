@@ -2,19 +2,17 @@ model Model
 	culture: en-US
 	collation: Latin1_General_100_BIN2_UTF8
 	defaultPowerBIDataSourceVersion: powerBI_V3
-	sourceQueryCulture: en-US
-	directLakeBehavior: directLakeOnly
 	dataAccessOptions
 		legacyRedirects
 		returnErrorValuesAsNull
 
 annotation __PBI_TimeIntelligenceEnabled = 0
 
-annotation PBIDesktopVersion = 2.139.1678.0 (24.12)+2a034ab280bddf891eb7bb9ebfe6996f9c3a3196
+annotation PBIDesktopVersion = 2.144.1378.0 (25.06)+cba1e61f16ea36d44901f06fa446299040122394
 
 annotation PBI_QueryOrder = ["DatabaseQuery"]
 
-annotation PBI_ProTooling = ["WebModelingEdit","RemoteModeling","DevMode"]
+annotation PBI_ProTooling = ["WebModelingEdit","RemoteModeling","DevMode","TMDL-Extension"]
 
 annotation __TEdtr = 1
 
