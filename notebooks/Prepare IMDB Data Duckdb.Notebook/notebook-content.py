@@ -27,24 +27,9 @@
 
 # META {
 # META   "language": "python",
-# META   "language_group": "jupyter_python"
-# META }
-
-# MARKDOWN ********************
-
-# # Upgrade Libraries
-
-# CELL ********************
-
-!pip install duckdb deltalake --upgrade -q
-
-# METADATA ********************
-
-# META {
-# META   "language": "python",
 # META   "language_group": "jupyter_python",
-# META   "frozen": true,
-# META   "editable": false
+# META   "frozen": false,
+# META   "editable": true
 # META }
 
 # MARKDOWN ********************
@@ -727,7 +712,7 @@ def load_table(file):
     for attempt in range(max_retries):
         tmp_con = None
         try:
-            tmp_con = DuckDBLakehouseConnector(setup_views=False, database="memory")
+            tmp_con = DuckDBLakehouseConnector(setup_views=False)
 
             urlretrieve(DATASET_URL + file, raw_file_path)
 
@@ -744,7 +729,7 @@ def load_table(file):
                 "isAdult": "TINYINT",
             }
 
-            detected_columns = con.sql(
+            detected_columns = tmp_con.sql(
                 f"SELECT Columns FROM sniff_csv('{raw_file_path}', sample_size = 1)"
             ).fetchone()[0]
             cast_statements = [

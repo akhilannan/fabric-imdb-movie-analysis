@@ -22,5 +22,3 @@ annotation TabularEditor_SerializeOptions = {"IgnoreInferredObjects":true,"Ignor
 
 ref table IMDB
 
-ref cultureInfo en-US
-
